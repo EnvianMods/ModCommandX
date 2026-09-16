@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld('zc', {
   // Optional files: the extras a mod page offers beside its main download.
   nexusOptionalFiles: (modId) => invoke('nexus-optional-files', { modId }),
   nexusInstallOptional: (modId, fileId, parentId) => invoke('nexus-install-optional', { modId, fileId, parentId }),
+  // ...and grouping mods you installed yourself under one of them by hand.
+  groupableMods: (parentId) => invoke('groupable-mods', { parentId }),
+  groupOptional: (childId, parentId) => invoke('group-optional', { childId, parentId }),
+  ungroupOptional: (childId) => invoke('ungroup-optional', { childId }),
   modVersions: (id) => invoke('mod-versions', { id }),
   rollbackVersion: (id, entryId) => invoke('rollback-version', { id, entryId }),
   setUpdateFreeze: (freeze) => invoke('set-update-freeze', { freeze }),

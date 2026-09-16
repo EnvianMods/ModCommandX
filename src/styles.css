@@ -287,6 +287,17 @@ body.reduced-motion * { transition: none !important; animation: none !important;
 .opt-chip.opt-update { border-color: rgba(255, 200, 87, 0.5); color: var(--amber); }
 .opt-chip.opt-misc { border-color: rgba(176, 140, 255, 0.5); color: #b08cff; }
 
+/* The modal's two halves: what the mod page offers, and what is already
+   installed and can simply be grouped under this mod. */
+.optional-section-head {
+  margin: 14px 0 6px; font-family: var(--sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 2px; color: var(--holo); opacity: 0.85;
+  border-bottom: 1px solid rgba(79, 209, 255, 0.22); padding-bottom: 5px;
+}
+#optional-nexus-section > .optional-section-head:first-child { margin-top: 4px; }
+.optional-section-hint { margin: 0 0 8px; font-size: 11px; line-height: 1.45; }
+.optional-signin-note { padding: 8px 4px; font-size: 11.5px; }
+
 .optional-row { align-items: flex-start; cursor: default; }
 .optional-row .import-info { flex: 1; min-width: 0; }
 .optional-row .import-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

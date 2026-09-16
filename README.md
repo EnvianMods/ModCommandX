@@ -239,6 +239,23 @@ automatically for IoStore package inspection; a different copy can be selected i
   them with it. Non-premium accounts get the same flow through the embedded
   Nexus panel — "Mod Manager Download" on an optional file lands it under the
   mod it belongs to.
+- **Grouping mods you installed yourself** *(experimental — `feat/optional-files`)*
+  — nothing about that nesting needs Nexus. The **⊕ Optional files** button is on
+  every mod, linked or not, signed in or not, and its second section, **ALREADY
+  INSTALLED**, lists the other installed mods that can be grouped under this one:
+  press **⇲ Group under &lt;mod&gt;** and the row moves into the mod's nested list
+  straight away. A mod grouped this way is marked `grouping:"manual"` (downloads
+  from a mod page are `"nexus"`, as are records written before the field existed)
+  and is indistinguishable on the deck — same OPTIONAL chip, same indent, same
+  switch, same cascade rules: off when the mod is off, uninstalled when the mod
+  is uninstalled. The one difference is how it leaves: a hand-grouped mod has a
+  **⇱ Ungroup** button that returns it to a row of its own, keeping its on/off
+  state, while a downloaded optional file keeps ✕ remove as its only exit (so a
+  later re-download cannot land beside it as a duplicate). Eligible mods exclude
+  anything already grouped, anything that already has optional files (nesting is
+  one level deep), and another MAIN file from the *same* Nexus page — that is a
+  version of the mod, which the ⧗ picker owns. New IPC: `groupable-mods`,
+  `group-optional`, `ungroup-optional`; engine: `attachChild` / `detachChild`.
 - **UE4SS one-click install** — Settings → UE4SS → Download & install fetches
   **the Zero Company package**: Nexus mod 9 "UE4SS for Star Wars Zero Company"
   (stock UE4SS plus this game's signatures, loader settings and helpers; its page

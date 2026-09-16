@@ -24,6 +24,22 @@
   disturbs the optional files sitting under it, and an optional file only
   updates when the author uploads a replacement *for that file* — it will never
   be quietly swapped for the mod's newest main download.
+- **Installed a mod's extras yourself? Group them the same way.** None of this
+  needs Nexus. **⊕ Optional files** is now on *every* mod on the Command Deck,
+  whether or not it came from Nexus and whether or not you are signed in, and it
+  has a second half — **ALREADY INSTALLED** — listing the other mods you have.
+  Press **⇲ Group under &lt;mod&gt;** and that mod slides into the nested list
+  right there, looking and behaving exactly like a file downloaded from a mod
+  page: the same OPTIONAL chip, the same indent, its own switch, off when the
+  mod is off, and removed when you uninstall the mod. That sameness is the
+  point — a mod you installed by hand is not a second-class row.
+- Changed your mind? A mod you grouped yourself has a **⇱ Ungroup** button that
+  puts it back on a row of its own, still installed and still however you had it
+  switched. (Files downloaded *from* a mod page keep ✕ as their only exit, so
+  downloading that file again can't leave you with two copies side by side.)
+- Sensible limits: a mod can only be grouped under one other mod, the nesting
+  never goes more than one level deep, and a mod's own other versions from the
+  same Nexus page are not offered — those belong to the ⧗ version picker.
 
 ## v1.9.14 (2026-09-23)
 

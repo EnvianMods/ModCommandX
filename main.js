@@ -2060,6 +2060,61 @@ const handlers = {
     }
   },
 
+  // ------------------------------------------------- grouping mods by hand
+  // Not every mod comes from Nexus. A mod the user downloaded and installed
+  // themselves can be grouped under another installed mod, and from then on it
+  // looks and behaves exactly like an optional file off a mod page: nested row,
+  // own switch, off when the parent is off, gone when the parent is uninstalled.
+  // Purely local bookkeeping — no Nexus call, no sign-in.
+
+  // Which installed mods may be grouped under this one.
+  'groupable-mods': async (_e, { parentId }) => {
+    const parent = store.getMod(parentId);
+    if (!parent) throw new Error('That mod is no longer installed.');
+    // Optional files nest one level deep, so anything that is already a child,
+    // or already has children of its own, is out.
+    const isParent = new Set(store.mods.filter((m) => m.parentId).map((m) => m.parentId));
+    const parentNexusId = parent.origin && parent.origin.type === 'nexus' ? parent.origin.modId : null;
+    return store.mods
+      .filter((m) => {
+        if (m.id === parent.id) return false;
+        if (m.parentId) return false;
+        if (isParent.has(m.id)) return false;
+        // Another MAIN file from the SAME Nexus page is a VERSION of this mod
+        // (the ⧗ version picker's business), not an extra that rides alongside
+        // it — grouping one under the other would be nonsense.
+        if (parentNexusId != null && m.origin && m.origin.type === 'nexus'
+          && m.origin.modId === parentNexusId
+          && (m.origin.category || 'MAIN') === 'MAIN') return false;
+        return true;
+      })
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        modType: m.modType,
+        version: m.version || null,
+        enabled: !!m.enabled,
+        origin: {
+          type: (m.origin && m.origin.type) || 'local',
+          category: (m.origin && m.origin.category) || null,
+        },
+      }));
+  },
+
+  'group-optional': async (_e, { childId, parentId }) => {
+    const child = engine.attachChild(childId, parentId);
+    const parent = store.getMod(parentId);
+    log('info', `grouped "${child.name}" as an optional file of "${parent ? parent.name : parentId}"` +
+      `${child.enabled ? '' : ' (switched off — the mod it is grouped under is disabled)'}`);
+    return fullState();
+  },
+
+  'ungroup-optional': async (_e, { childId }) => {
+    const child = engine.detachChild(childId);
+    log('info', `ungrouped "${child.name}" — it is a mod of its own again`);
+    return fullState();
+  },
+
   // On-demand: find Nexus source candidates for every still-unlinked installed
   // mod and RETURN them for review — nothing is linked here (the renderer walks
   // them one at a time in a wizard and links each pick via 'link-origin'). Two

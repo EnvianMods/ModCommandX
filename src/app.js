@@ -214,11 +214,15 @@ function buildChildRow(child, parent) {
   const row = document.createElement('div');
   row.className = `mod-row mod-child${child.enabled ? '' : ' disabled'}`;
 
-  const cat = (child.origin && child.origin.category) || 'OPTIONAL';
+  // A mod the user grouped here by hand carries no Nexus file category — it
+  // still reads OPTIONAL, and looks exactly like a downloaded one. That
+  // sameness IS the feature: a manually installed mod is not a second-class row.
+  const manual = (child.grouping || 'nexus') === 'manual';
+  const cat = manual ? 'OPTIONAL' : ((child.origin && child.origin.category) || 'OPTIONAL');
   const chip = document.createElement('span');
-  chip.className = `opt-chip ${OPT_CHIP_CLASS[cat] || ''}`;
+  chip.className = `opt-chip ${manual ? '' : (OPT_CHIP_CLASS[cat] || '')}`;
   chip.textContent = OPT_CHIP[cat] || cat;
-  chip.title = `Nexus file category: ${cat} — an optional download of “${parent.name}”`;
+  chip.title = manual ? 'Grouped by you' : `Nexus file category: ${cat} — an optional download of “${parent.name}”`;
 
   const badge = document.createElement('span');
   badge.className = `mod-badge badge-${child.modType}`;
@@ -260,17 +264,36 @@ function buildChildRow(child, parent) {
   const del = document.createElement('button');
   del.className = 'btn danger tiny';
   del.textContent = '✕';
-  del.title = `Remove this optional file (“${parent.name}” itself stays installed)`;
+  del.title = manual
+    ? `Uninstall “${child.name}” for good — its files leave the game and the library. To just move it back out of “${parent.name}”, use ⇱ Ungroup.`
+    : `Remove this optional file (“${parent.name}” itself stays installed)`;
   del.addEventListener('click', async () => {
     if (!window.confirm(`Remove the optional file “${child.name}”? Its files leave the game and the library; “${parent.name}” itself stays installed.`)) return;
     const data = await verifiedCall('uninstallMod', [child.id], 'Remove');
     if (data) { state = data; render(); toast(`Optional file “${child.name}” removed.`); }
   });
 
+  // Ungroup is only offered for a mod the USER grouped here. An optional file
+  // downloaded from the parent's Nexus page leaves by ✕ alone: detaching it
+  // would free the mod page to install the very same file again, beside it.
+  let ungroup = null;
+  if (manual) {
+    ungroup = document.createElement('button');
+    ungroup.className = 'btn ghost tiny';
+    ungroup.textContent = '⇱ Ungroup';
+    ungroup.title = `Move “${child.name}” back out to a row of its own. It stays installed and keeps its on/off state.`;
+    ungroup.addEventListener('click', async () => {
+      const data = await call('ungroupOptional', child.id);
+      if (data) { state = data; render(); toast(`“${child.name}” is a mod of its own again.`); }
+    });
+  }
+
   row.append(chip, badge, main);
   const upd = buildUpdateButton(child);
   if (upd) row.appendChild(upd);
-  row.append(toggle, del);
+  row.appendChild(toggle);
+  if (ungroup) row.appendChild(ungroup);
+  row.appendChild(del);
   return row;
 }
 
@@ -455,21 +478,17 @@ function renderMods() {
     versionsBtn.addEventListener('click', () => openVersionsModal(mod));
     actions.appendChild(versionsBtn);
 
-    // Optional files: the extras this mod's Nexus page offers beside its main
-    // download (alternative textures, patches, hotfixes). Each installs as its
-    // own switchable entry nested under this row.
-    if (originType === 'nexus' && mod.origin.modId) {
+    // Optional files: the extras that ride alongside this mod — the ones its
+    // Nexus page offers (alternative textures, patches, hotfixes) AND any mod
+    // already installed that the user wants grouped under this one. Both end up
+    // as the same thing: a switchable entry nested under this row. So the button
+    // is on every mod, linked or not, signed in or not.
+    {
       const optBtn = document.createElement('button');
       optBtn.className = 'btn ghost tiny';
       optBtn.textContent = '⊕ Optional files';
-      const signedIn = !!(state.nexus && state.nexus.signedIn);
-      if (signedIn) {
-        optBtn.title = 'Install optional files from this mod’s Nexus page';
-        optBtn.addEventListener('click', () => openOptionalFilesModal(mod));
-      } else {
-        optBtn.disabled = true;
-        optBtn.title = 'Sign in to Nexus Mods in Settings first';
-      }
+      optBtn.title = 'Optional files — from this mod’s Nexus page, or group mods you installed yourself';
+      optBtn.addEventListener('click', () => openOptionalFilesModal(mod));
       actions.appendChild(optBtn);
     }
 
@@ -2124,12 +2143,105 @@ async function openNexusVersionsModal(m) {
 }
 
 // --------------------------------------------------- optional files
-// The extras a Nexus mod page offers beside its main download. Each one
-// installs as its own entry nested under the mod on the Command Deck, with its
-// own enable/disable switch — so a texture pack or a hotfix can be tried and
-// dropped without touching the mod itself.
+// Extras that ride alongside a mod. They come from two places and end up
+// identical: the downloads the mod's Nexus page offers beside its main file,
+// and mods the user installed themselves and chose to group under this one.
+// Either way the result is its own entry nested under the mod on the Command
+// Deck, with its own enable/disable switch — so a texture pack or a hotfix can
+// be tried and dropped without touching the mod itself.
+//
+// The modal therefore has two sections: FROM THE NEXUS PAGE (only for a
+// Nexus-linked mod) and ALREADY INSTALLED (always).
 
 async function openOptionalFilesModal(mod) {
+  $('#optional-files-title').textContent = `OPTIONAL FILES — ${mod.name}`;
+  $('#optional-files-sub').textContent =
+    `Extras that ride alongside “${mod.name}”: each gets its own on/off switch under this mod, ` +
+    'and goes away if you uninstall it.';
+  await renderNexusOptionalSection(mod);
+  await renderGroupableSection(mod);
+  $('#optional-files-modal').classList.remove('hidden');
+}
+
+// The mods already installed that may be grouped under this one — the manual
+// half of the feature. No Nexus involved: the row simply moves under the parent.
+async function renderGroupableSection(mod) {
+  const list = $('#optional-group-list');
+  list.innerHTML = '';
+  $('#optional-group-hint').textContent =
+    `Installed a mod's extras yourself? Group them under “${mod.name}” and they behave just like ` +
+    'files downloaded from a mod page — nested, switchable, and removed with the mod.';
+  const mods = await call('groupableMods', mod.id);
+  if (!mods) return;
+  if (!mods.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dim';
+    empty.style.padding = '10px 4px';
+    empty.textContent = 'Every other installed mod is already grouped or is a parent itself.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const m of mods) {
+    const row = document.createElement('div');
+    row.className = 'import-row optional-row groupable-row';
+    const info = document.createElement('div');
+    info.className = 'import-info';
+    const name = document.createElement('div');
+    name.className = 'import-name';
+    const label = document.createElement('span');
+    label.textContent = `${m.name}${m.version ? ` — v${m.version}` : ''}`;
+    const badge = document.createElement('span');
+    badge.className = `mod-badge badge-${m.modType}`;
+    badge.textContent = TYPE_LABEL[m.modType] || m.modType;
+    name.append(label, badge);
+    const meta = document.createElement('div');
+    meta.className = 'import-meta';
+    meta.textContent = [
+      m.origin.type === 'nexus' ? 'from Nexus' : (m.origin.type === 'github' ? 'from GitHub' : 'installed by you'),
+      m.enabled ? 'active' : 'switched off',
+    ].join(' · ');
+    info.append(name, meta);
+
+    const acts = document.createElement('div');
+    acts.className = 'optional-acts';
+    const btn = document.createElement('button');
+    btn.className = 'btn tiny primary';
+    btn.textContent = `⇲ Group under ${mod.name}`;
+    btn.title = mod.enabled
+      ? `Nest “${m.name}” under “${mod.name}” as an optional file. You can ungroup it again at any time.`
+      : `Nest “${m.name}” under “${mod.name}”. “${mod.name}” is switched off, so “${m.name}” is switched off with it.`;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const data = await call('groupOptional', m.id, mod.id);
+      if (!data) { btn.disabled = false; return; }
+      state = data;
+      optionalOpen.add(mod.id); // show where it landed
+      render();
+      $('#optional-files-modal').classList.add('hidden');
+      toast(`“${m.name}” is now an optional file of “${mod.name}”.`);
+    });
+    acts.appendChild(btn);
+    row.append(info, acts);
+    list.appendChild(row);
+  }
+}
+
+// The extras this mod's own Nexus page offers. Hidden entirely for a mod that
+// is not linked to Nexus, and reduced to one line while signed out.
+async function renderNexusOptionalSection(mod) {
+  const section = $('#optional-nexus-section');
+  const list = $('#optional-files-list');
+  list.innerHTML = '';
+  const linked = !!(mod.origin && mod.origin.type === 'nexus' && mod.origin.modId);
+  section.classList.toggle('hidden', !linked);
+  if (!linked) return;
+  if (!(state.nexus && state.nexus.signedIn)) {
+    const note = document.createElement('div');
+    note.className = 'dim optional-signin-note';
+    note.textContent = 'Sign in to Nexus Mods in Settings to list the page’s files.';
+    list.appendChild(note);
+    return;
+  }
   const modId = mod.origin.modId;
   const data = await call('nexusOptionalFiles', modId);
   if (!data) return;
@@ -2140,7 +2252,6 @@ async function openOptionalFilesModal(mod) {
     (data.isPremium
       ? 'Installing one downloads it straight away.'
       : 'Free accounts: the site must start the download — open the files page and press the “Mod Manager Download” button of the file you want; it installs here as an optional file.');
-  const list = $('#optional-files-list');
   list.innerHTML = '';
   if (!data.files.length) {
     const empty = document.createElement('div');
@@ -2244,7 +2355,6 @@ async function openOptionalFilesModal(mod) {
     row.append(info, acts);
     list.appendChild(row);
   }
-  $('#optional-files-modal').classList.remove('hidden');
 }
 
 // --------------------------------------------------- featured transmissions (promoted authors)
