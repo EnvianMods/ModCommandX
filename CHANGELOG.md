@@ -1,5 +1,30 @@
 # Zero Company Mod Command — Changelog
 
+## Unreleased
+
+**Install a mod's optional files — and switch them on and off one by one**
+- Most Nexus pages offer more than the main download: alternative textures, a
+  compatibility patch, a hotfix. Until now installing one of those *replaced*
+  the mod, because Mod Command treated every file on a page as the same mod.
+- Every Nexus-linked mod on the Command Deck now has an **⊕ Optional files**
+  button. It opens the mod's page files — the optional, update and
+  miscellaneous ones — with their size, date and the author's own description,
+  and marks anything you already have. Press **⭳ Install** and it is added
+  *alongside* the mod, not over it. (Not signed in? The button tells you to sign
+  in first. Free account? It opens the mod's files page in the app, exactly like
+  any other download — press "Mod Manager Download" on the file you want.)
+- Installed optional files fold away under the mod they belong to: the row shows
+  **▸ 2 optional files**, and opening it lists each one indented, with its own
+  on/off switch, its own version and its own ✕ to remove just that file.
+- They behave the way you would expect: turning the mod off turns its optional
+  files off with it; turning it back on leaves them however you had them; a
+  file cannot be switched on while the mod itself is off; uninstalling the mod
+  removes its optional files too (the confirmation says how many).
+- Updates stay in their own lanes. Updating the mod's main file no longer
+  disturbs the optional files sitting under it, and an optional file only
+  updates when the author uploads a replacement *for that file* — it will never
+  be quietly swapped for the mod's newest main download.
+
 ## v1.9.14 (2026-09-23)
 
 Ships together with v1.9.13 below as public 1.0.9.

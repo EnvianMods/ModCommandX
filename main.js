@@ -471,6 +471,72 @@ function installedMods(res) {
   return res.multi ? res.mods : [res];
 }
 
+// ---------------------------------------------------------- optional files
+// A Nexus mod page offers several downloads. The MAIN file IS the mod; the
+// OPTIONAL / UPDATE / MISCELLANEOUS files are extras meant to sit ALONGSIDE it.
+// So where a download lands depends on its category:
+//
+//   MAIN, OLD_VERSION (a version switch)  → replaces the mod's PARENT entries
+//   OPTIONAL / UPDATE / MISCELLANEOUS     → installs as a CHILD of the parent
+//                                           (replacing the child it supersedes),
+//                                           or, with no parent installed, as an
+//                                           ordinary top-level entry.
+//
+// Every Nexus install records origin.category + origin.fileName from here on;
+// records written before this feature have no category and count as MAIN.
+function planNexusInstall(modId, fileId, data, fileMeta) {
+  const files = (data && data.files) || [];
+  const file = fileMeta || files.find((f) => f.file_id === fileId) || null;
+  const category = (file && file.category_name) || 'MAIN';
+  const base = {
+    category,
+    fileName: (file && file.file_name) || null,
+    fileLabel: (file && file.name) || null,
+    version: (file && file.version) || null,
+    parentId: null, childId: null, childFileId: null,
+  };
+  const entries = store.mods.filter((m) => m.origin && m.origin.type === 'nexus' && m.origin.modId === modId);
+  const parents = entries.filter((m) => !m.parentId);
+  if (!nexus.OPTIONAL_CATEGORIES.has(category)) {
+    return { ...base, mode: parents.length ? 'replace-parent' : 'top-level' };
+  }
+  const parent = parents[0] || null;
+  if (!parent) return { ...base, mode: 'top-level' };
+  const child = entries.find((m) => m.parentId === parent.id && (
+    m.origin.fileId === fileId
+    || (m.origin.fileId != null && nexus.updateChain(data && data.updates, m.origin.fileId).includes(fileId))
+  )) || null;
+  return {
+    ...base,
+    mode: child ? 'replace-child' : 'child',
+    parentId: parent.id,
+    childId: child ? child.id : null,
+    childFileId: child ? child.origin.fileId : null,
+  };
+}
+
+// An optional file is named after the FILE ("Extra Skins"), not after the mod
+// page — the parent row already carries the mod's name.
+function nameOptionalChild(mods, plan) {
+  if (mods.length !== 1 || !mods[0].id) return;
+  const label = plan.fileLabel || (plan.fileName || '').replace(/\.(zip|7z|rar)$/i, '');
+  if (!label) return;
+  try { engine.rename(mods[0].id, label); } catch (_) {}
+}
+
+// Nexus file descriptions are light HTML ("<br />" and entities) — the modal
+// shows them as plain text.
+function plainText(html, limit = 320) {
+  const s = String(html || '')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#0?39;|&apos;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s.length > limit ? `${s.slice(0, limit - 1)}…` : s;
+}
+
 const protocolArgs = () => {
   // Portable builds must register the on-disk exe, not the temp-extracted one.
   if (process.env.PORTABLE_EXECUTABLE_FILE) return { exe: process.env.PORTABLE_EXECUTABLE_FILE, args: [] };
@@ -486,20 +552,25 @@ async function handleNxm(rawUrl) {
     let info = null;
     try { info = await nexus.modInfo(link.modId, token); } catch (_) {}
     // Authoritative filename + version from the file API — CDN URLs aren't
-    // reliable for the name, and the page-level mod version is free text.
-    let fileMeta = null;
-    try { fileMeta = await nexus.fileInfo(link.modId, link.fileId, token); } catch (_) {}
+    // reliable for the name, and the page-level mod version is free text. The
+    // whole files payload (not just this file) comes along because the file's
+    // CATEGORY and the update chain decide whether this download replaces the
+    // mod or joins it as an optional file.
+    let filesData = { files: [], updates: [] };
+    try { filesData = await nexus.filesData(link.modId, token); } catch (_) {}
+    let fileMeta = filesData.files.find((f) => f.file_id === link.fileId) || null;
+    if (!fileMeta) { try { fileMeta = await nexus.fileInfo(link.modId, link.fileId, token); } catch (_) {} }
     const fileName = (fileMeta && fileMeta.file_name) || null;
     const uri = await nexus.downloadLink(link, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, fileName, (got, total) => {
       sendEvent({ type: 'progress', label: info ? info.name : `mod ${link.modId}`, received: got, total });
     });
     try {
-      // Same Nexus mod already installed? This is an update — replace in place
-      // (all entries, when the archive holds several mods).
-      const existing = store.mods.some((m) => m.origin && m.origin.type === 'nexus' && m.origin.modId === link.modId);
+      // Where does this file belong — is it the mod itself, or an extra that
+      // rides alongside the installed main file? (see planNexusInstall)
+      const plan = planNexusInstall(link.modId, link.fileId, filesData, fileMeta);
       const version = (fileMeta && fileMeta.version) || (info ? info.version : null);
-      const origin = { type: 'nexus', modId: link.modId, fileId: link.fileId, version };
+      const origin = { type: 'nexus', modId: link.modId, fileId: link.fileId, version, category: plan.category, fileName };
       // The UE4SS compatibility page: keep the current runtime first, and
       // record the install so the Settings card can track this source.
       const isUe4ssPage = link.modId === ue4ssDl.NEXUS_MOD_ID;
@@ -508,21 +579,32 @@ async function handleNxm(rawUrl) {
         const kept = engine.ue4ssSnapshot(ue4ssLabel(cur), cur);
         if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
       }
-      if (existing) {
-        const res = await engine.replaceOrigin({ type: 'nexus', modId: link.modId }, dest, origin, version);
+      if (plan.mode === 'replace-parent' || plan.mode === 'replace-child') {
+        const isChild = plan.mode === 'replace-child';
+        const match = isChild
+          ? { type: 'nexus', modId: link.modId, fileId: plan.childFileId }
+          : { type: 'nexus', modId: link.modId };
+        const res = await engine.replaceOrigin(match, dest, origin, version, { parentId: plan.parentId });
         if (res.pendingFomod) {
           forwardFomod(res, info ? info.name : `mod ${link.modId}`);
         } else {
           const names = installedMods(res).map((m) => m.name).join('”, “');
-          sendEvent({ type: 'toast', message: `Updated “${names}” to ${version ? 'v' + version : 'the latest version'}.` });
+          sendEvent({ type: 'toast', message: isChild
+            ? `Updated the optional file “${names}”${version ? ` to v${version}` : ''}.`
+            : `Updated “${names}” to ${version ? 'v' + version : 'the latest version'}.` });
         }
       } else {
-        const res = await engine.install(dest, { origin, version });
+        const res = await engine.install(dest, { origin, version, parentId: plan.parentId });
         if (res.pendingFomod) {
           forwardFomod(res, info ? info.name : `mod ${link.modId}`);
         } else if (res.modType === 'ue4ss-runtime') {
           if (isUe4ssPage) recordNexusUe4ss({ fileId: link.fileId, version, asset: fileName, publishedAt: fileMeta && fileMeta.uploaded_timestamp ? new Date(fileMeta.uploaded_timestamp * 1000).toISOString() : null });
           sendEvent({ type: 'toast', message: `UE4SS runtime installed from Nexus${version ? ` (v${version})` : ''}. Your UE4SS mods and start order are unchanged.` });
+        } else if (plan.mode === 'child') {
+          const mods = installedMods(res);
+          nameOptionalChild(mods, plan);
+          const parentName = (store.getMod(plan.parentId) || {}).name || (info ? info.name : `mod ${link.modId}`);
+          sendEvent({ type: 'toast', message: `Installed the optional file “${(plan.fileLabel || mods[0].name)}” under “${parentName}”.` });
         } else {
           const mods = installedMods(res);
           if (mods.length === 1 && mods[0].id && info && info.name) {
@@ -588,7 +670,11 @@ async function checkForUpdates({ background = false } = {}) {
         // The site's file-update chain decides (see nexus.resolveUpdate) — the
         // page-level "Mod version" field is free text authors rarely maintain.
         const data = await withNexusToken((t) => nexus.filesData(origin.modId, t, { background }));
-        const r = nexus.resolveUpdate(data, origin, compareVersions);
+        // An optional/update/misc file is its own line on the mod page: only
+        // the site's update chain may move it. Falling back to the newest MAIN
+        // file would "update" an optional extra into the mod's main download.
+        const optional = !!(origin.category && origin.category !== 'MAIN');
+        const r = nexus.resolveUpdate(data, origin, compareVersions, { noPrimaryFallback: optional });
         if (r.target) {
           mod.updateInfo = {
             available: true, latest: r.target.version || r.target.name, current: r.current,
@@ -1407,8 +1493,10 @@ const handlers = {
   },
   'uninstall-mod': async (_e, { id, force }) => {
     const name = (store.getMod(id) || {}).name;
+    // Optional files go with the mod they belong to.
+    const kids = engine.childrenOf(id).length;
     engine.uninstall(id, force);
-    log('info', `uninstalled "${name}"`);
+    log('info', `uninstalled "${name}"${kids ? ` and its ${kids} optional file(s)` : ''}`);
     return fullState();
   },
   'rename-mod': async (_e, { id, name }) => { engine.rename(id, name); return fullState(); },
@@ -1657,7 +1745,10 @@ const handlers = {
       sendEvent({ type: 'progress', label: name || `mod ${modId}`, received: got, total });
     });
     try {
-      const origin = { type: 'nexus', modId, fileId: file.file_id, version: file.version || null };
+      const origin = {
+        type: 'nexus', modId, fileId: file.file_id, version: file.version || null,
+        category: file.category_name || 'MAIN', fileName: file.file_name || null,
+      };
       const res = await engine.install(dest, { origin, version: file.version || null });
       if (res.pendingFomod) {
         forwardFomod(res, name || `mod ${modId}`);
@@ -1832,25 +1923,138 @@ const handlers = {
         name,
       };
     }
-    const files = await nexus.filesList(modId, token);
-    const file = files.find((f) => f.file_id === fileId);
+    const data = await nexus.filesData(modId, token);
+    const file = data.files.find((f) => f.file_id === fileId);
     if (!file) throw new Error('That file is no longer listed on the mod page.');
+    const plan = planNexusInstall(modId, fileId, data, file);
     const uri = await nexus.downloadLink({ modId, fileId }, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
       sendEvent({ type: 'progress', label: `${name || `mod ${modId}`} ${file.version || ''}`, received: got, total });
     });
     try {
-      const origin = { type: 'nexus', modId, fileId, version: file.version || null };
-      const existing = store.mods.some((m) => m.origin && m.origin.type === 'nexus' && m.origin.modId === modId);
-      const res = existing
-        ? await engine.replaceOrigin({ type: 'nexus', modId }, dest, origin, file.version || null)
-        : await engine.install(dest, { origin, version: file.version || null });
+      const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
+      const replacing = plan.mode === 'replace-parent' || plan.mode === 'replace-child';
+      const res = replacing
+        ? await engine.replaceOrigin(
+          plan.mode === 'replace-child'
+            ? { type: 'nexus', modId, fileId: plan.childFileId }
+            : { type: 'nexus', modId },
+          dest, origin, file.version || null, { parentId: plan.parentId })
+        : await engine.install(dest, { origin, version: file.version || null, parentId: plan.parentId });
       if (res.pendingFomod) {
         forwardFomod(res, name || `mod ${modId}`);
         return { pendingFomod: true, state: fullState() };
       }
-      log('info', `installed version ${file.version || '?'} (file ${fileId}) of nexus mod ${modId}${existing ? ' (replaced installed version — old one vaulted)' : ''}`);
-      return { installed: true, switched: existing, version: file.version || null, state: fullState() };
+      if (plan.mode === 'child') nameOptionalChild(installedMods(res), plan);
+      log('info', `installed ${plan.category} file ${fileId} (v${file.version || '?'}) of nexus mod ${modId}` +
+        `${plan.parentId ? ` as an optional file of ${plan.parentId}` : ''}${replacing ? ' (replaced in place — old one vaulted)' : ''}`);
+      return {
+        installed: true, switched: replacing, optional: !!plan.parentId,
+        version: file.version || null, state: fullState(),
+      };
+    } finally {
+      fs.rmSync(dest, { force: true });
+    }
+  },
+
+  // The optional / update / miscellaneous downloads a mod page offers, with the
+  // ones already installed under this mod marked. Never lists MAIN or
+  // OLD_VERSION files — those are version switches, and the ⧗ picker owns them.
+  'nexus-optional-files': async (_e, { modId }) => {
+    const token = await nexusAccessToken();
+    const data = await nexus.filesData(modId, token);
+    let modName = null;
+    try { modName = (await nexus.modInfo(modId, token)).name || null; } catch (_) {}
+    const entries = store.mods.filter((m) => m.origin && m.origin.type === 'nexus' && m.origin.modId === modId);
+    const parent = entries.find((m) => !m.parentId) || null;
+    const children = parent ? entries.filter((m) => m.parentId === parent.id) : [];
+    // A child counts as "this file installed" when it IS that file, or when
+    // this file is further along the same update chain.
+    const installedAs = (fileId) => {
+      const hit = children.find((c) => c.origin.fileId === fileId
+        || (c.origin.fileId != null && nexus.updateChain(data.updates, c.origin.fileId).includes(fileId)));
+      return hit ? hit.id : null;
+    };
+    const files = data.files
+      .filter((f) => nexus.OPTIONAL_CATEGORIES.has(f.category_name || ''))
+      .sort((a, b) => (b.uploaded_timestamp || 0) - (a.uploaded_timestamp || 0))
+      .map((f) => ({
+        fileId: f.file_id,
+        name: f.name,
+        version: f.version || null,
+        category: f.category_name,
+        sizeKb: f.size_kb || f.size || 0,
+        uploaded: f.uploaded_timestamp ? new Date(f.uploaded_timestamp * 1000).toISOString() : null,
+        description: plainText(f.description),
+        installedAs: installedAs(f.file_id),
+      }));
+    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (_) {} }
+    return {
+      mod: { name: modName || (parent ? parent.name : `mod ${modId}`) },
+      parentId: parent ? parent.id : null,
+      files,
+      isPremium: !!(nexusUser && nexusUser.isPremium),
+    };
+  },
+
+  // Install one optional file under an installed mod. Premium downloads
+  // directly; a free account gets the mod's Files page in the embedded panel,
+  // and the nxm:// its "Mod Manager Download" emits lands as a child through
+  // handleNxm (same planNexusInstall rules).
+  'nexus-install-optional': async (_e, { modId, fileId, parentId }) => {
+    const token = await nexusAccessToken();
+    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (err) { throw new Error(err.message); } }
+    const parentMod = parentId ? store.getMod(parentId) : null;
+    if (!nexusUser.isPremium) {
+      return {
+        opened: 'embed',
+        url: `https://www.nexusmods.com/${nexus.GAME_DOMAIN}/mods/${modId}?tab=files`,
+        name: parentMod ? parentMod.name : `mod ${modId}`,
+      };
+    }
+    const data = await nexus.filesData(modId, token);
+    const file = data.files.find((f) => f.file_id === fileId);
+    if (!file) throw new Error('That file is no longer listed on the mod page.');
+    let plan = planNexusInstall(modId, fileId, data, file);
+    // The user pressed the button on a specific mod row — that row is the
+    // parent, even when another entry of the same Nexus mod is installed too.
+    if (parentMod && plan.parentId !== parentMod.id) {
+      const child = store.mods.find((m) => m.parentId === parentMod.id
+        && m.origin && m.origin.type === 'nexus' && m.origin.modId === modId
+        && (m.origin.fileId === fileId
+          || (m.origin.fileId != null && nexus.updateChain(data.updates, m.origin.fileId).includes(fileId)))) || null;
+      plan = {
+        ...plan, parentId: parentMod.id, mode: child ? 'replace-child' : 'child',
+        childId: child ? child.id : null, childFileId: child ? child.origin.fileId : null,
+      };
+    }
+    const uri = await nexus.downloadLink({ modId, fileId }, token);
+    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
+      sendEvent({ type: 'progress', label: `${file.name || file.file_name}${file.version ? ` v${file.version}` : ''}`, received: got, total });
+    });
+    try {
+      const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
+      const replaced = plan.mode === 'replace-child' || plan.mode === 'replace-parent';
+      const res = replaced
+        ? await engine.replaceOrigin(
+          plan.mode === 'replace-child'
+            ? { type: 'nexus', modId, fileId: plan.childFileId }
+            : { type: 'nexus', modId },
+          dest, origin, file.version || null, { parentId: plan.parentId })
+        : await engine.install(dest, { origin, version: file.version || null, parentId: plan.parentId });
+      if (res.pendingFomod) {
+        forwardFomod(res, file.name || `mod ${modId}`);
+        return { pendingFomod: true, parentId: plan.parentId, state: fullState() };
+      }
+      const mods = installedMods(res);
+      if (plan.parentId) nameOptionalChild(mods, plan);
+      log('info', `optional file ${fileId} (${plan.category}, v${file.version || '?'}) of nexus mod ${modId} ` +
+        `${replaced ? 'replaced' : 'installed'}${plan.parentId ? ` under ${plan.parentId}` : ' as a top-level entry'}`);
+      return {
+        installed: true, replaced, parentId: plan.parentId,
+        name: plan.fileLabel || (mods[0] && mods[0].name) || file.name,
+        count: mods.length, state: fullState(),
+      };
     } finally {
       fs.rmSync(dest, { force: true });
     }
@@ -2035,9 +2239,20 @@ const handlers = {
         });
         try {
           const newVersion = file.version || mod.updateInfo.latest;
+          // An optional file (a child, or a top-level entry installed from one)
+          // is matched by its FILE id, so updating it never disturbs the mod's
+          // main file — and updating the main file never disturbs it.
+          const optional = !!(mod.parentId || (origin.category && origin.category !== 'MAIN'));
+          const match = optional
+            ? { type: 'nexus', modId: origin.modId, fileId: origin.fileId }
+            : { type: 'nexus', modId: origin.modId };
           const res = await engine.replaceOrigin(
-            { type: 'nexus', modId: origin.modId }, dest,
-            { type: 'nexus', modId: origin.modId, fileId: file.file_id, version: newVersion }, newVersion);
+            match, dest,
+            {
+              type: 'nexus', modId: origin.modId, fileId: file.file_id, version: newVersion,
+              category: file.category_name || origin.category || 'MAIN', fileName: file.file_name || null,
+            },
+            newVersion, { parentId: mod.parentId || null });
           if (res.pendingFomod) { forwardFomod(res, mod.name); return { pendingFomod: true, state: fullState() }; }
         } finally {
           fs.rmSync(dest, { force: true });

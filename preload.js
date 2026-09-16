@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('zc', {
   resetStorageDir: () => invoke('reset-storage-dir'),
   nexusFileVersions: (modId) => invoke('nexus-file-versions', { modId }),
   nexusInstallFile: (modId, fileId, name) => invoke('nexus-install-file', { modId, fileId, name }),
+  // Optional files: the extras a mod page offers beside its main download.
+  nexusOptionalFiles: (modId) => invoke('nexus-optional-files', { modId }),
+  nexusInstallOptional: (modId, fileId, parentId) => invoke('nexus-install-optional', { modId, fileId, parentId }),
   modVersions: (id) => invoke('mod-versions', { id }),
   rollbackVersion: (id, entryId) => invoke('rollback-version', { id, entryId }),
   setUpdateFreeze: (freeze) => invoke('set-update-freeze', { freeze }),

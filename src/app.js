@@ -162,12 +162,126 @@ function render() {
   refreshBrowseCards();
 }
 
+// Which mods show their optional files expanded. Session memory only: every
+// parent starts closed, and an optional install opens the row it landed under.
+const optionalOpen = new Set();
+
+const OPT_CHIP = { OPTIONAL: 'OPTIONAL', UPDATE: 'UPDATE', MISCELLANEOUS: 'MISC' };
+const OPT_CHIP_CLASS = { UPDATE: 'opt-update', MISCELLANEOUS: 'opt-misc' };
+
+function childrenOfMod(id) {
+  return (state && state.mods ? state.mods : []).filter((m) => m.parentId === id);
+}
+
+// Update flag: auto-updatable gets a button; manual gets an open-page chip.
+// Shared by top-level rows and optional-file rows.
+function buildUpdateButton(mod) {
+  if (!mod.updateInfo || !mod.updateInfo.available) return null;
+  const el = document.createElement('button');
+  el.className = `update-flag ${mod.updateInfo.auto ? 'auto' : 'manual'}`;
+  el.textContent = mod.updateInfo.auto
+    ? `⬆ Update to ${mod.updateInfo.latest}`
+    : `⬆ ${mod.updateInfo.latest} on Nexus`;
+  el.title = mod.updateInfo.auto
+    ? `Update from ${mod.updateInfo.current} to ${mod.updateInfo.latest}`
+    : `v${mod.updateInfo.latest} is out (you have ${mod.updateInfo.current}). Opens the Files page — press "Mod Manager Download" and it updates in place.`;
+  el.addEventListener('click', async () => {
+    el.disabled = true;
+    try {
+      const res = await call('updateMod', mod.id);
+      if (!res) return;
+      if (res.updated) {
+        state = res.state;
+        render();
+        toast(`“${mod.name}” updated to ${mod.updateInfo.latest}.`);
+      } else if (res.opened === 'embed') {
+        openNexusDownload(mod.name, res.url);
+      } else if (res.opened === 'website') {
+        toast('Files page opened — press “Mod Manager Download” and the update installs in place.', 'info', 9000);
+      }
+    } finally {
+      el.disabled = false;
+      $('#progress-toast').classList.add('hidden');
+    }
+  });
+  return el;
+}
+
+// One optional file, rendered indented under the mod it belongs to. It is a
+// real mod record — its own files, load priority and update line — so it gets
+// its own switch, its own update flag and its own remove button.
+function buildChildRow(child, parent) {
+  const row = document.createElement('div');
+  row.className = `mod-row mod-child${child.enabled ? '' : ' disabled'}`;
+
+  const cat = (child.origin && child.origin.category) || 'OPTIONAL';
+  const chip = document.createElement('span');
+  chip.className = `opt-chip ${OPT_CHIP_CLASS[cat] || ''}`;
+  chip.textContent = OPT_CHIP[cat] || cat;
+  chip.title = `Nexus file category: ${cat} — an optional download of “${parent.name}”`;
+
+  const badge = document.createElement('span');
+  badge.className = `mod-badge badge-${child.modType}`;
+  badge.textContent = TYPE_LABEL[child.modType] || child.modType;
+
+  const main = document.createElement('div');
+  main.className = 'mod-main';
+  const name = document.createElement('div');
+  name.className = 'mod-name';
+  name.textContent = child.name;
+  const meta = document.createElement('div');
+  meta.className = 'mod-meta';
+  meta.textContent = [
+    child.version ? `v${child.version}` : null,
+    `${child.files.length} file${child.files.length === 1 ? '' : 's'}`,
+    child.loadPriority != null ? `priority ${child.loadPriority}` : null,
+    (child.origin && child.origin.fileName) || null,
+  ].filter(Boolean).join('  ·  ');
+  main.append(name, meta);
+
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.className = 'switch';
+  toggle.checked = child.enabled;
+  if (!parent.enabled) {
+    toggle.disabled = true;
+    toggle.title = `“${parent.name}” is disabled — an optional file cannot be active without the mod it belongs to.`;
+  } else {
+    toggle.title = child.enabled ? 'Disable this optional file (undeploy)' : 'Enable this optional file (deploy)';
+  }
+  toggle.addEventListener('change', async () => {
+    const data = toggle.checked
+      ? await call('setModEnabled', child.id, true)
+      : await verifiedCall('setModEnabled', [child.id, false], 'Disable');
+    if (data) { state = data; render(); }
+    else toggle.checked = !toggle.checked;
+  });
+
+  const del = document.createElement('button');
+  del.className = 'btn danger tiny';
+  del.textContent = '✕';
+  del.title = `Remove this optional file (“${parent.name}” itself stays installed)`;
+  del.addEventListener('click', async () => {
+    if (!window.confirm(`Remove the optional file “${child.name}”? Its files leave the game and the library; “${parent.name}” itself stays installed.`)) return;
+    const data = await verifiedCall('uninstallMod', [child.id], 'Remove');
+    if (data) { state = data; render(); toast(`Optional file “${child.name}” removed.`); }
+  });
+
+  row.append(chip, badge, main);
+  const upd = buildUpdateButton(child);
+  if (upd) row.appendChild(upd);
+  row.append(toggle, del);
+  return row;
+}
+
 function renderMods() {
   const list = $('#mod-list');
   list.innerHTML = '';
   $('#mods-empty').classList.toggle('hidden', state.mods.length > 0);
 
-  for (const mod of state.mods) {
+  // Optional files are nested under the mod they belong to, never listed as
+  // mods of their own.
+  for (const mod of state.mods.filter((m) => !m.parentId)) {
     const row = document.createElement('div');
     row.className = `mod-row${mod.enabled ? '' : ' disabled'}`;
 
@@ -201,16 +315,34 @@ function renderMods() {
     const name = document.createElement('div');
     name.className = 'mod-name';
     name.textContent = mod.name;
+    const kids = childrenOfMod(mod.id);
     const meta = document.createElement('div');
     meta.className = 'mod-meta';
     const parts = [
       `${mod.files.length} file${mod.files.length === 1 ? '' : 's'}`,
       mod.loadPriority != null ? `priority ${mod.loadPriority}` : null,
+      kids.length ? `+ ${kids.length} optional` : null,
       mod.sourceArchive || null,
       `installed ${new Date(mod.installedAt).toLocaleDateString()}`,
     ].filter(Boolean);
     meta.textContent = parts.join('  ·  ');
     main.append(name, meta);
+
+    // Optional files installed under this mod fold away behind a caret.
+    let caret = null;
+    if (kids.length) {
+      const open = optionalOpen.has(mod.id);
+      const onCount = kids.filter((k) => k.enabled).length;
+      caret = document.createElement('button');
+      caret.className = 'mod-optional-caret';
+      caret.textContent = `${open ? '▾' : '▸'} ${kids.length} optional file${kids.length === 1 ? '' : 's'}`;
+      caret.title = `${onCount} of ${kids.length} active — click to ${open ? 'collapse' : 'expand'}`;
+      caret.addEventListener('click', () => {
+        if (optionalOpen.has(mod.id)) optionalOpen.delete(mod.id);
+        else optionalOpen.add(mod.id);
+        renderMods();
+      });
+    }
 
     const myConflicts = state.conflicts.filter((c) => c.memberIds.includes(mod.id));
     const flag = document.createElement('button');
@@ -298,6 +430,15 @@ function renderMods() {
           `Disable “${mod.name}”? Its folder is removed from SWZeroCompany\\Mods.\n\n${SAVE_CAVEAT}`);
         if (!go) { toggle.checked = true; return; }
       }
+      // Turning a mod off takes its optional files with it.
+      if (!toggle.checked && kids.filter((k) => k.enabled).length) {
+        const on = kids.filter((k) => k.enabled).length;
+        const go = window.confirm(
+          `Disable “${mod.name}”? Its ${on} active optional file${on === 1 ? '' : 's'} ` +
+          `(${kids.filter((k) => k.enabled).map((k) => k.name).join(', ')}) ` +
+          `will be switched off too — re-enabling the mod leaves them off until you switch them back on.`);
+        if (!go) { toggle.checked = true; return; }
+      }
       const data = toggle.checked
         ? await call('setModEnabled', mod.id, true)
         : await verifiedCall('setModEnabled', [mod.id, false], 'Disable');
@@ -313,6 +454,25 @@ function renderMods() {
     versionsBtn.title = 'Version vault — roll back to an archived version';
     versionsBtn.addEventListener('click', () => openVersionsModal(mod));
     actions.appendChild(versionsBtn);
+
+    // Optional files: the extras this mod's Nexus page offers beside its main
+    // download (alternative textures, patches, hotfixes). Each installs as its
+    // own switchable entry nested under this row.
+    if (originType === 'nexus' && mod.origin.modId) {
+      const optBtn = document.createElement('button');
+      optBtn.className = 'btn ghost tiny';
+      optBtn.textContent = '⊕ Optional files';
+      const signedIn = !!(state.nexus && state.nexus.signedIn);
+      if (signedIn) {
+        optBtn.title = 'Install optional files from this mod’s Nexus page';
+        optBtn.addEventListener('click', () => openOptionalFilesModal(mod));
+      } else {
+        optBtn.disabled = true;
+        optBtn.title = 'Sign in to Nexus Mods in Settings first';
+      }
+      actions.appendChild(optBtn);
+    }
+
     const renameBtn = document.createElement('button');
     renameBtn.className = 'btn ghost tiny';
     renameBtn.textContent = 'Rename';
@@ -331,51 +491,30 @@ function renderMods() {
         : mod.modType === 'gfp'
           ? `\n\n${SAVE_CAVEAT}`
           : '';
-      if (!window.confirm(`Uninstall “${mod.name}”? Its files are removed from the game and the library.${note}`)) return;
+      // Optional files belong to this mod — they go with it.
+      const kidNote = kids.length
+        ? ` Its ${kids.length} optional file${kids.length === 1 ? '' : 's'} (${kids.map((k) => k.name).join(', ')}) ${kids.length === 1 ? 'is' : 'are'} removed too.`
+        : '';
+      if (!window.confirm(`Uninstall “${mod.name}”? Its files are removed from the game and the library.${kidNote}${note}`)) return;
       const data = await verifiedCall('uninstallMod', [mod.id], 'Uninstall');
       if (data) { state = data; render(); toast(`“${mod.name}” uninstalled`); }
     });
     actions.append(renameBtn, delBtn);
 
-    // Update flag: auto-updatable gets a button; manual gets an open-page chip.
-    let updateEl = null;
-    if (mod.updateInfo && mod.updateInfo.available) {
-      updateEl = document.createElement('button');
-      updateEl.className = `update-flag ${mod.updateInfo.auto ? 'auto' : 'manual'}`;
-      updateEl.textContent = mod.updateInfo.auto
-        ? `⬆ Update to ${mod.updateInfo.latest}`
-        : `⬆ ${mod.updateInfo.latest} on Nexus`;
-      updateEl.title = mod.updateInfo.auto
-        ? `Update from ${mod.updateInfo.current} to ${mod.updateInfo.latest}`
-        : `v${mod.updateInfo.latest} is out (you have ${mod.updateInfo.current}). Opens the Files page — press "Mod Manager Download" and it updates in place.`;
-      updateEl.addEventListener('click', async () => {
-        updateEl.disabled = true;
-        try {
-          const res = await call('updateMod', mod.id);
-          if (!res) return;
-          if (res.updated) {
-            state = res.state;
-            render();
-            toast(`“${mod.name}” updated to ${mod.updateInfo.latest}.`);
-          } else if (res.opened === 'embed') {
-            openNexusDownload(mod.name, res.url);
-          } else if (res.opened === 'website') {
-            toast('Files page opened — press “Mod Manager Download” and the update installs in place.', 'info', 9000);
-          }
-        } finally {
-          updateEl.disabled = false;
-          $('#progress-toast').classList.add('hidden');
-        }
-      });
-    }
+    const updateEl = buildUpdateButton(mod);
 
     row.append(badge, srcBadge, main, flag);
+    if (caret) row.appendChild(caret);
     if (eaChip) row.appendChild(eaChip);
     if (zcChip) row.appendChild(zcChip);
     if (buildChip) row.appendChild(buildChip);
     if (updateEl) row.appendChild(updateEl);
     row.append(toggle, actions);
     list.appendChild(row);
+
+    if (kids.length && optionalOpen.has(mod.id)) {
+      for (const child of kids) list.appendChild(buildChildRow(child, mod));
+    }
   }
 
   const autoUpdatable = state.mods.filter((m) => m.updateInfo && m.updateInfo.available && m.updateInfo.auto);
@@ -1775,9 +1914,14 @@ function buildBrowseCard(m) {
     tag.className = 'featured-tag installed-tag';
     const allOff = inHangar.every((x) => !x.enabled);
     tag.textContent = updateEntry ? '⬆ UPDATE READY' : (allOff ? '✓ IN HANGAR · OFF' : '✓ IN HANGAR');
-    tag.title = inHangar.length === 1
-      ? `Installed as “${inHangar[0].name}”${inHangar[0].version ? ` v${inHangar[0].version}` : ''}${inHangar[0].enabled ? '' : ' (disabled)'}`
-      : `${inHangar.length} entries from this mod are installed`;
+    // Optional files count towards "installed" but are not separate mods — say
+    // so, rather than reporting them as extra entries.
+    const optionals = inHangar.filter((x) => x.parentId);
+    const tops = inHangar.filter((x) => !x.parentId);
+    const optSuffix = optionals.length ? ` + ${optionals.length} optional file${optionals.length === 1 ? '' : 's'}` : '';
+    tag.title = (tops.length === 1
+      ? `Installed as “${tops[0].name}”${tops[0].version ? ` v${tops[0].version}` : ''}${tops[0].enabled ? '' : ' (disabled)'}`
+      : `${tops.length || inHangar.length} entries from this mod are installed`) + optSuffix;
     card.appendChild(tag);
     card.classList.add('in-hangar');
   }
@@ -1977,6 +2121,130 @@ async function openNexusVersionsModal(m) {
     list.appendChild(row);
   }
   $('#nexus-versions-modal').classList.remove('hidden');
+}
+
+// --------------------------------------------------- optional files
+// The extras a Nexus mod page offers beside its main download. Each one
+// installs as its own entry nested under the mod on the Command Deck, with its
+// own enable/disable switch — so a texture pack or a hotfix can be tried and
+// dropped without touching the mod itself.
+
+async function openOptionalFilesModal(mod) {
+  const modId = mod.origin.modId;
+  const data = await call('nexusOptionalFiles', modId);
+  if (!data) return;
+  const parentId = data.parentId || mod.id;
+  $('#optional-files-title').textContent = `OPTIONAL FILES — ${data.mod.name || mod.name}`;
+  $('#optional-files-sub').textContent = `Extra downloads this mod's Nexus page offers beside its main file. ` +
+    `Each installs under “${mod.name}” with its own on/off switch, and is removed if you uninstall the mod. ` +
+    (data.isPremium
+      ? 'Installing one downloads it straight away.'
+      : 'Free accounts: the site must start the download — open the files page and press the “Mod Manager Download” button of the file you want; it installs here as an optional file.');
+  const list = $('#optional-files-list');
+  list.innerHTML = '';
+  if (!data.files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dim';
+    empty.style.padding = '10px 4px';
+    empty.textContent = 'This mod offers no optional files.';
+    list.appendChild(empty);
+  }
+  for (const f of data.files) {
+    const row = document.createElement('div');
+    row.className = 'import-row optional-row';
+    const info = document.createElement('div');
+    info.className = 'import-info';
+    const name = document.createElement('div');
+    name.className = 'import-name';
+    const label = document.createElement('span');
+    label.textContent = `${f.name}${f.version ? ` — v${f.version}` : ''}`;
+    const chip = document.createElement('span');
+    chip.className = `opt-chip ${OPT_CHIP_CLASS[f.category] || ''}`;
+    chip.textContent = OPT_CHIP[f.category] || f.category;
+    name.append(label, chip);
+    const meta = document.createElement('div');
+    meta.className = 'import-meta';
+    meta.textContent = [
+      f.sizeKb ? `${(f.sizeKb / 1024).toFixed(1)} MB` : null,
+      f.uploaded ? new Date(f.uploaded).toLocaleDateString() : null,
+    ].filter(Boolean).join(' · ');
+    info.append(name, meta);
+    if (f.description) {
+      const desc = document.createElement('div');
+      desc.className = 'optional-desc';
+      desc.textContent = f.description;
+      info.appendChild(desc);
+    }
+
+    const acts = document.createElement('div');
+    acts.className = 'optional-acts';
+    const install = async (btn, reinstall) => {
+      btn.disabled = true;
+      try {
+        const res = await call('nexusInstallOptional', modId, f.fileId, parentId);
+        if (!res) return;
+        if (res.opened === 'embed') {
+          $('#optional-files-modal').classList.add('hidden');
+          openNexusDownload(res.name || mod.name, res.url);
+          return;
+        }
+        if (res.pendingFomod) {
+          state = res.state;
+          optionalOpen.add(parentId);
+          render();
+          $('#optional-files-modal').classList.add('hidden');
+          toast(`“${f.name}” ships a guided installer — answer its steps to finish.`, 'info', 8000);
+          return;
+        }
+        if (res.installed) {
+          state = res.state;
+          optionalOpen.add(res.parentId || parentId); // show what just landed
+          render();
+          $('#optional-files-modal').classList.add('hidden');
+          toast(res.replaced
+            ? `Optional file “${res.name || f.name}” updated under “${mod.name}”.`
+            : `Optional file “${res.name || f.name}” installed under “${mod.name}”.`);
+        }
+      } finally {
+        btn.disabled = false;
+        $('#progress-toast').classList.add('hidden');
+      }
+    };
+
+    if (f.installedAs) {
+      const done = document.createElement('button');
+      done.className = 'btn tiny';
+      done.textContent = '✓ Installed';
+      done.disabled = true;
+      done.title = 'Already installed as an optional file of this mod — switch it off or remove it on the Command Deck.';
+      acts.appendChild(done);
+      if (data.isPremium) {
+        const again = document.createElement('button');
+        again.className = 'btn ghost tiny';
+        again.textContent = 'Reinstall';
+        again.title = 'Download this file again and replace the installed copy (the old one goes to the version vault)';
+        again.addEventListener('click', () => install(again, true));
+        acts.appendChild(again);
+      }
+    } else if (data.isPremium) {
+      const act = document.createElement('button');
+      act.className = 'btn tiny primary';
+      act.textContent = '⭳ Install';
+      act.title = `Install “${f.name}” as an optional file of “${mod.name}”`;
+      act.addEventListener('click', () => install(act, false));
+      acts.appendChild(act);
+    } else {
+      const act = document.createElement('button');
+      act.className = 'btn tiny';
+      act.textContent = 'Files page ↗';
+      act.title = 'Opens the mod’s Files tab — press “Mod Manager Download” on this file and it installs here as an optional file';
+      act.addEventListener('click', () => install(act, false));
+      acts.appendChild(act);
+    }
+    row.append(info, acts);
+    list.appendChild(row);
+  }
+  $('#optional-files-modal').classList.remove('hidden');
 }
 
 // --------------------------------------------------- featured transmissions (promoted authors)

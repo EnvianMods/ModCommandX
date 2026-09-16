@@ -221,6 +221,24 @@ automatically for IoStore package inspection; a different copy can be selected i
   `Retry-After` on a 429, keeps at most two requests in flight, and background
   work (the hourly update check, the file-name index) leaves a reserve for your
   own clicks and reschedules itself rather than spending it.
+- **Optional files** *(experimental — `feat/optional-files`)* — a Nexus page
+  usually offers more than its main download: alternative textures, patches,
+  hotfixes. Every Nexus-linked row on the Command Deck has an **⊕ Optional
+  files** button that lists the mod's OPTIONAL / UPDATE / MISCELLANEOUS files
+  (never its MAIN or old versions — the ⧗ picker owns those) with size, date and
+  the author's description, marking the ones already installed. Installing one
+  keeps it as a *child* of the mod: a full mod record of its own (`parentId` on
+  the record, plus `origin.category` and `origin.fileName`), so it has its own
+  files, load-order slot, conflict detection, version vault and update line —
+  but it is shown nested under the mod behind a "▸ N optional files" caret
+  instead of as a mod of its own, with its own enable/disable switch and remove
+  button. Updating the mod's main file leaves the optional files alone (and vice
+  versa: an optional file only ever follows the site's own update chain, never
+  the newest main file). Turning the mod off turns its optional files off,
+  turning it back on leaves them as they were, and uninstalling the mod removes
+  them with it. Non-premium accounts get the same flow through the embedded
+  Nexus panel — "Mod Manager Download" on an optional file lands it under the
+  mod it belongs to.
 - **UE4SS one-click install** — Settings → UE4SS → Download & install fetches
   **the Zero Company package**: Nexus mod 9 "UE4SS for Star Wars Zero Company"
   (stock UE4SS plus this game's signatures, loader settings and helpers; its page
