@@ -1,7 +1,7 @@
 'use strict';
 // OWNER TOOL — publishes a Mod Command X release to GitHub:
 //   1. creates a GitHub Release (tag vX.Y.Z) on github.com/EnvianMods/ModCommandX
-//   2. uploads the shipping zip as a release asset
+//   2. uploads the shipping zip (plus any extra files given) as release assets
 //
 // X is a private build distributed ONLY through those GitHub releases (never
 // on Nexus Mods). Publishing the release IS the announcement: installed copies
@@ -11,7 +11,7 @@
 // the guard below refuses those targets even when passed with --repo.
 //
 // Usage (run after building and zipping):
-//   node publish-release.js [--repo Owner/Name] <version> <path-to-zip> [--notes "..."]
+//   node publish-release.js [--repo Owner/Name] <version> <path-to-zip> [more assets...] [--notes "..."]
 //   node publish-release.js [--repo Owner/Name] --show
 //   node publish-release.js --check-only <path-to-zip>   (guard only, no GitHub)
 //
@@ -22,6 +22,11 @@
 // PRIVACY GUARD: HANDOFF.md (internal working notes) is untracked in the public
 // repo and lives only in the archive repo. Before any asset is uploaded, a .zip
 // is listed and refused if it contains anything matching /HANDOFF/i.
+//
+// COMPLETENESS GUARD: the shipping zip (ModCommandX-v<version>.zip) must carry
+// both ModCommandX.exe and "Uninstall Mod Command X.exe" (built next to it by
+// electron-builder, see build/after-all-artifacts.js); a zip without the
+// uninstaller is refused.
 
 const fs = require('fs');
 const path = require('path');
@@ -112,7 +117,25 @@ function assertAssetIsPublishable(assetPath) {
   return { checked: true, tool, entries: lines.length };
 }
 
-module.exports = { assertAssetIsPublishable, listZip, FORBIDDEN_IN_ASSETS };
+// The shipping zip must contain the app AND its uninstaller.
+const SHIPPING_ZIP = /^ModCommandX-v\d+\.\d+\.\d+\.zip$/i;
+const REQUIRED_IN_SHIPPING_ZIP = ['ModCommandX.exe', 'Uninstall Mod Command X.exe'];
+
+function assertShippingZipComplete(assetPath) {
+  if (!SHIPPING_ZIP.test(path.basename(assetPath))) return { checked: false };
+  const { lines } = listZip(assetPath);
+  const missing = REQUIRED_IN_SHIPPING_ZIP.filter((name) =>
+    !lines.some((l) => l.trim().toLowerCase().endsWith(name.toLowerCase())
+      && /(^|[\s\\/])$/.test(l.trim().slice(0, l.trim().length - name.length))));
+  if (missing.length) {
+    throw new Error(`REFUSING TO UPLOAD ${path.basename(assetPath)} — it is missing ${missing.join(' and ')}.
+`
+      + '  The shipping zip carries ModCommandX.exe and "Uninstall Mod Command X.exe" (both in release/ after npm run dist), README.txt and CHANGELOG.md.');
+  }
+  return { checked: true };
+}
+
+module.exports = { assertAssetIsPublishable, assertShippingZipComplete, listZip, FORBIDDEN_IN_ASSETS, REQUIRED_IN_SHIPPING_ZIP };
 
 async function gh(url, options = {}) {
   return fetch(url, {
@@ -134,10 +157,16 @@ async function main() {
   if (checkIdx !== -1) {
     const target = args[checkIdx + 1];
     if (!target || !fs.existsSync(target)) { console.error('Usage: node publish-release.js --check-only <path-to-zip>'); process.exit(1); }
-    const r = assertAssetIsPublishable(target);
-    console.log(r.checked
-      ? `OK — ${path.basename(target)} is clean (${r.entries} entries listed with ${r.tool}).`
-      : `OK — ${path.basename(target)} is not a .zip, nothing to list.`);
+    try {
+      const r = assertAssetIsPublishable(target);
+      const c = assertShippingZipComplete(target);
+      console.log(r.checked
+        ? `OK — ${path.basename(target)} is clean (${r.entries} entries listed with ${r.tool})${c.checked ? ', app + uninstaller present' : ''}.`
+        : `OK — ${path.basename(target)} is not a .zip, nothing to list.`);
+    } catch (e) {
+      console.error('BLOCKED:', e.message);
+      process.exit(1);
+    }
     return;
   }
 
@@ -162,16 +191,21 @@ async function main() {
   const notes = notesIdx !== -1 ? args[notesIdx + 1] || '' : '';
   const skipIdx = new Set([notesIdx + 1, args.indexOf('--repo') + 1].filter((i) => i > 0));
   const positional = args.filter((a, i) => !a.startsWith('--') && !skipIdx.has(i));
-  const [version, zipPath] = positional;
-  if (!version || !/^\d+\.\d+\.\d+$/.test(version) || !zipPath || !fs.existsSync(zipPath)) {
-    console.error('Usage: node publish-release.js [--repo Owner/Name] <version like 1.2.0> <path-to-zip> [--notes "..."]');
+  const [version, zipPath, ...extraAssets] = positional;
+  const assets = [zipPath, ...extraAssets];
+  if (!version || !/^\d+\.\d+\.\d+$/.test(version) || !zipPath || assets.some((a) => !fs.existsSync(a))) {
+    console.error('Usage: node publish-release.js [--repo Owner/Name] <version like 1.2.0> <path-to-zip> [more assets...] [--notes "..."]');
     process.exit(1);
   }
 
-  // 0. privacy guard — never let internal working notes reach the release page
+  // 0. privacy + completeness guards — never let internal working notes reach
+  //    the release page, never ship the app without its uninstaller
   try {
-    const g = assertAssetIsPublishable(zipPath);
-    if (g.checked) console.log(`Asset check: ${path.basename(zipPath)} clean, no HANDOFF entries (${g.entries} entries listed with ${g.tool}).`);
+    for (const a of assets) {
+      const g = assertAssetIsPublishable(a);
+      if (g.checked) console.log(`Asset check: ${path.basename(a)} clean, no HANDOFF entries (${g.entries} entries listed with ${g.tool}).`);
+      if (assertShippingZipComplete(a).checked) console.log(`Asset check: ${path.basename(a)} carries ModCommandX.exe and Uninstall Mod Command X.exe.`);
+    }
   } catch (e) {
     console.error('BLOCKED:', e.message);
     process.exit(1);
@@ -200,24 +234,24 @@ async function main() {
     }
     release = await createRes.json();
   }
-  if ((release.assets || []).some((a) => a.name === path.basename(zipPath))) {
-    console.log(`skip ${path.basename(zipPath)} (already uploaded)`);
-    console.log('GitHub release:', release.html_url);
-    return;
-  }
-
-  // 2. upload the zip asset
-  const assetName = path.basename(zipPath);
-  console.log(`Uploading ${assetName} (${(fs.statSync(zipPath).size / 1048576).toFixed(1)} MB)…`);
-  const uploadUrl = release.upload_url.replace(/\{.*\}$/, '') + `?name=${encodeURIComponent(assetName)}`;
-  const uploadRes = await gh(uploadUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/zip' },
-    body: fs.readFileSync(zipPath),
-  });
-  if (!uploadRes.ok) {
-    console.error(`Asset upload failed (${uploadRes.status}):`, (await uploadRes.text()).slice(0, 400));
-    process.exit(1);
+  // 2. upload the assets (the zip first); re-runs skip what is already there
+  for (const asset of assets) {
+    const assetName = path.basename(asset);
+    if ((release.assets || []).some((a) => a.name === assetName)) {
+      console.log(`skip ${assetName} (already uploaded)`);
+      continue;
+    }
+    console.log(`Uploading ${assetName} (${(fs.statSync(asset).size / 1048576).toFixed(1)} MB)…`);
+    const uploadUrl = release.upload_url.replace(/\{.*\}$/, '') + `?name=${encodeURIComponent(assetName)}`;
+    const uploadRes = await gh(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': /\.zip$/i.test(assetName) ? 'application/zip' : 'application/octet-stream' },
+      body: fs.readFileSync(asset),
+    });
+    if (!uploadRes.ok) {
+      console.error(`Asset upload failed (${uploadRes.status}):`, (await uploadRes.text()).slice(0, 400));
+      process.exit(1);
+    }
   }
   console.log('GitHub release published:', release.html_url);
   if (REPO_FULL === DEFAULT_REPO) {

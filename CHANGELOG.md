@@ -208,6 +208,51 @@ package.json (the version Mod SDK manifests are checked against).
   linked, the SDK's own Forge workbench (both bring their own look), and the
   operating system's own menus and dialogs.
 
+**An uninstaller that removes the app and leaves your mods playing**
+- The release ships **`Uninstall Mod Command X.exe`** next to
+  `ModCommandX.exe`; **Settings → Uninstall Mod Command X…** (last card, in
+  danger colours in both themes) starts it and closes the app. A source run
+  shows a note instead — the uninstaller comes with the release build.
+- Before anything happens it lists what it removes and what it keeps, with
+  sizes, and asks you to confirm. It will not run while Mod Command X is open
+  (it offers to close it), retries files in use and then lists any it had to
+  leave, and ends with a summary; a short log (no keys, your profile path
+  shortened) goes to `%TEMP%\ModCommandX-uninstall.log`.
+- Removed: settings and app data (`%APPDATA%\ModCommandX`: the encrypted API
+  key, download staging, the file-index cache, retoc), the browser profile
+  with the Nexus panel's cookies (`%APPDATA%\Mod Command X`), the portable
+  unpack folder `%TEMP%\ModCommandX`, `ModCommandX.exe` and the uninstaller
+  itself (deleted right after it closes), a source checkout's dev `data\`.
+- Undone: the **Steam update freeze**, if X set it — exactly as Settings →
+  freeze off does (left on when the main Mod Command also froze the game);
+  the **`nxm://` handler**, only when it points at Mod Command X — one that
+  belongs to the main Mod Command or another manager is left alone and the
+  list says so.
+- Kept: every mod installed in the game (`~mods`, `LogicMods`,
+  `SWZeroCompany\Mods`, `ue4ss\Mods`, UE4SS itself), UE4SS `mods.txt` with its
+  start-order block, `*.zcbak` config originals, and everything of the main
+  Zero Company Mod Command.
+- **Your mod library is kept by default**, so reinstalling restores every
+  mod. Tick *"Also delete my stored mod library (mods you switched off live
+  only here and would be lost)"* to delete it; the warning names the
+  switched-off mods that would be lost and the game-file mods whose original
+  files are backed up there. In the archive shared with the main Mod Command
+  (`<game>\ModCommandArchive`) only the entries X alone uses are deleted —
+  whatever the main app's own settings or the shared mod list name stays,
+  and so do the archive folder and its `manager-data.json`, from which only
+  Mod Command X's own block, profiles and X-only records are taken out (the
+  main app's records keep their exact bytes).
+- Safe by construction: deletes only inside an allow-list of Mod Command X's
+  own folders, every path resolved and checked, links removed as links and
+  never followed, never a drive root, the game folder, `%APPDATA%` or
+  `%TEMP%` themselves; a game path from the settings that does not look like
+  the game skips every game-side step.
+- Tiny and dependency-free: a ~140 KB program compiled with the C# compiler
+  that is part of Windows' .NET Framework 4.x — no admin rights, nothing to
+  install. The build makes it automatically (`Build.bat`, `npm run dist`);
+  `npm run build-uninstaller` builds it alone. Linux AppImage builds get
+  `uninstall-linux.sh` with the same rules (Settings shows the command).
+
 ---
 
 # Inherited history — Zero Company Mod Command up to 1.9.14

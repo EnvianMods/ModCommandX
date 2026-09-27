@@ -1001,6 +1001,23 @@ $('#btn-save-report').addEventListener('click', async () => {
   if (res && res.saved) toast(`Sanitized report saved as ${res.file}.`, 'info', 6000);
 });
 
+// Settings -> Uninstall: main starts the standalone uninstaller and quits.
+// A source run or Linux gets a note instead (nothing is removed from here).
+$('#btn-uninstall-app').addEventListener('click', async () => {
+  const note = $('#uninstall-note');
+  if (!window.confirm('Close Mod Command X and open the uninstaller?\n\nNothing is removed yet: the uninstaller lists what it removes and keeps and asks you to confirm.')) return;
+  const res = await call('launchUninstaller');
+  if (!res) return;
+  if (res.launched) { toast('Opening the uninstaller — Mod Command X is closing.', 'info', 4000); return; }
+  note.textContent = res.linux
+    ? `Close Mod Command X, then run this in a terminal: ${res.command}`
+    : res.message;
+  note.classList.remove('hidden');
+  if (res.linux) {
+    try { await navigator.clipboard.writeText(res.command); toast('Uninstall command copied to the clipboard.', 'info', 5000); } catch (_) {}
+  }
+});
+
 async function runDiagnostics() {
   const data = await call('runDiagnostics');
   if (!data) return;

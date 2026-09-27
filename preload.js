@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('zc', {
   confirmModBuild: (id) => invoke('confirm-mod-build', { id }),
   supportReport: () => invoke('support-report'),
   saveSupportReport: () => invoke('save-support-report'),
+  launchUninstaller: () => invoke('launch-uninstaller'),
   setAllEnabled: (enabled, force) => invoke('set-all-enabled', { enabled, force }),
   scanManagerSources: () => invoke('scan-manager-sources'),
   importManagerFolder: (path) => invoke('import-manager-folder', { path }),

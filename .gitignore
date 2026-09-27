@@ -22,3 +22,8 @@ HANDOFF.md
 # Environment files that may carry tokens
 .env
 .env.*
+
+# Uninstaller build output (build/build-uninstaller.js)
+build/uninstaller/bin/
+build/uninstaller/obj/
+/Uninstall Mod Command X.exe

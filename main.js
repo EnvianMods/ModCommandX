@@ -3347,6 +3347,66 @@ handlers['sdk-link-check-update'] = async (_e, { force } = {}) => {
   return info;
 };
 
+// ----------------------------------------------------------- UNINSTALL
+// Settings -> "Uninstall Mod Command X…" starts the standalone uninstaller
+// (build/uninstaller: a ~140 KB .NET Framework exe, see README "Uninstalling")
+// and quits, so nothing of the app is running or locked while it removes the
+// app's files. A Windows release carries it twice: next to ModCommandX.exe,
+// and embedded in resources/uninstaller/bin for users who kept only the exe.
+// The embedded copy is started from %TEMP%\ModCommandX-uninstaller — never
+// from %TEMP%\ModCommandX, which is one of the folders it deletes. Linux gets
+// uninstall-linux.sh, copied out of the AppImage (whose mount disappears when
+// the app quits) for the user to run in a terminal.
+const UNINSTALLER_EXE = 'Uninstall Mod Command X.exe';
+
+function uninstallerSource() {
+  if (!app.isPackaged) return null;
+  if (process.platform === 'linux') {
+    const sh = path.join(process.resourcesPath, 'uninstaller', 'uninstall-linux.sh');
+    return fs.existsSync(sh) ? { script: sh } : null;
+  }
+  if (process.platform !== 'win32') return null;
+  const sibling = process.env.PORTABLE_EXECUTABLE_DIR && path.join(process.env.PORTABLE_EXECUTABLE_DIR, UNINSTALLER_EXE);
+  if (sibling && fs.existsSync(sibling)) return { exe: sibling, copy: false };
+  const embedded = path.join(process.resourcesPath, 'uninstaller', 'bin', UNINSTALLER_EXE);
+  return fs.existsSync(embedded) ? { exe: embedded, copy: true } : null;
+}
+
+handlers['launch-uninstaller'] = async () => {
+  if (!app.isPackaged) {
+    return {
+      launched: false,
+      dev: true,
+      message: 'The uninstaller comes with the release build (next to ModCommandX.exe). This is a source run: build it with "npm run build-uninstaller" and start build\\uninstaller\\bin\\Uninstall Mod Command X.exe yourself once the app is closed.',
+    };
+  }
+  const src = uninstallerSource();
+  if (!src) throw new Error('The uninstaller is missing from this build. Download the release zip again: it has "Uninstall Mod Command X.exe" next to ModCommandX.exe.');
+  const os = require('os');
+  if (src.script) {
+    const dest = path.join(os.tmpdir(), 'mod-command-x-uninstall.sh');
+    fs.copyFileSync(src.script, dest);
+    fs.chmodSync(dest, 0o755);
+    log('info', 'uninstaller script copied out for the user to run');
+    const appImage = process.env.APPIMAGE ? ` --appimage "${process.env.APPIMAGE}"` : '';
+    return { launched: false, linux: true, command: `sh "${dest}"${appImage}` };
+  }
+  let exe = src.exe;
+  if (src.copy) {
+    const dir = path.join(os.tmpdir(), 'ModCommandX-uninstaller');
+    fs.mkdirSync(dir, { recursive: true });
+    exe = path.join(dir, UNINSTALLER_EXE);
+    fs.copyFileSync(src.exe, exe);
+  }
+  const args = ['--wait-pid', String(process.pid)];
+  if (process.env.PORTABLE_EXECUTABLE_FILE) args.push('--app-exe', process.env.PORTABLE_EXECUTABLE_FILE);
+  const child = spawn(exe, args, { detached: true, stdio: 'ignore', windowsHide: false });
+  child.unref();
+  log('info', 'uninstaller started; quitting');
+  setTimeout(() => app.quit(), 300);
+  return { launched: true };
+};
+
 for (const [channel, fn] of Object.entries(handlers)) {
   ipcMain.handle(channel, async (event, payload) => {
     try {
