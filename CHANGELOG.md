@@ -275,7 +275,7 @@ v1.9.15, adapted to X's API key and one-click downloads)*
   stock build — switch to the Star Wars Zero Company UE4SS (Nexus)"*, with a
   one-click **Switch to the Nexus build**. The Settings item in the rail shows
   **!** until you do. A Nexus build Mod Command installed is recognised by its
-  files and tracked for updates from then on.
+  UE4SS.dll and tracked for updates from then on.
 - **Your UE4SS setup survives every install, update and switch.** Only UE4SS's
   own files are replaced: your UE4SS mods are untouched, a built-in you
   switched off stays off, `mods.txt` keeps every line you had (including the
@@ -302,6 +302,32 @@ v1.9.15, adapted to X's API key and one-click downloads)*
 - A UE4SS copied over the Nexus build by hand is noticed (Diagnostics offers
   the switch back), and installing or restoring UE4SS while the game is
   running now stops with a clear "close the game first".
+
+**UE4SS switches, updates and restores touch UE4SS's own files only** *(ported
+from upstream, before its release)*
+- ⧗ Versions snapshots, retirements and restores are bounded by a fixed list
+  of UE4SS's own files (dwmapi.dll, UE4SS.dll/.pdb, the settings file, its
+  license and docs, its signature and layout-template folders) plus exactly
+  what the installed package shipped, which Mod Command X records. Dumps,
+  `.jmap` files, logs, crash dumps and the Mod SDK's files are never kept,
+  removed or overwritten, and old kept builds that still hold the whole
+  `ue4ss` folder put back only UE4SS's own files.
+- Files the Mod SDK generated in `UE4SS_Signatures` are never removed. If a
+  package (or a restore) would overwrite one of the same name, the SDK's file
+  is kept in ⧗ Versions first — if that copy cannot be made, nothing is
+  changed — and it comes back when you restore the build before it; an
+  older copy never replaces the SDK's current one.
+- Kept builds remember what they were installed with (the shipped-file list
+  and the shipped `UE4SS-settings.ini`), so settings carry over correctly
+  after a restore; a restored stock build is tracked as the stock build.
+- Signature files alone no longer count as proof of the Nexus build (the Mod
+  SDK writes them too): a UE4SS Mod Command X has no record of installing is
+  shown as one it cannot identify, with the switch offered.
+- The first update check after startup reads your API key's account before
+  deciding, so a premium account gets the automatic update (and the right
+  notices) rather than the free-account ones.
+- Restoring the oldest kept build no longer removes it from ⧗ Versions before
+  it is put back.
 
 ---
 
