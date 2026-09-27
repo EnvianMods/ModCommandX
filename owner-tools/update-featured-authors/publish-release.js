@@ -52,7 +52,21 @@ function getToken() {
     }
   }
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  return null;
+  // Recommended: no token file at all — `gh auth login` once, and the GitHub
+  // CLI's own credential store (the OS keyring) supplies it. Never printed.
+  return ghCliToken();
+}
+
+let ghTokenCache;
+function ghCliToken() {
+  if (ghTokenCache === undefined) {
+    ghTokenCache = null;
+    try {
+      const r = require('child_process').spawnSync('gh', ['auth', 'token'], { encoding: 'utf8', windowsHide: true });
+      if (r.status === 0 && String(r.stdout || '').trim()) ghTokenCache = String(r.stdout).trim();
+    } catch (_) { /* gh not installed */ }
+  }
+  return ghTokenCache;
 }
 
 // ---------------------------------------------------------------- zip guard

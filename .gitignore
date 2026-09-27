@@ -18,3 +18,7 @@ token.txt
 # Internal working notes - lives in the archive repo at docs/HANDOFF.md, never published
 HANDOFF.md
 *.lnk
+
+# Environment files that may carry tokens
+.env
+.env.*

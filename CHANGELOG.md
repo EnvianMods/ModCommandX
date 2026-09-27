@@ -40,8 +40,8 @@ package.json (the version Mod SDK manifests are checked against).
   again (password field, **Get my API key ↗**, Save / Verify / Clear, with the
   walkthrough for finding the key on next.nexusmods.com).
 - The key is validated against `/v1/users/validate.json` before it is stored,
-  encrypted with your OS account (DPAPI via safeStorage; plaintext only when
-  the OS store is unavailable), sent only to nexusmods.com as the `apikey`
+  encrypted with your OS account (DPAPI via safeStorage; never in plain text —
+  see below), sent only to nexusmods.com as the `apikey`
   header, and never shown, logged or put in a diagnostics report. X never
   deletes a stored key — only Clear does.
 - Name and premium status come from validate.json; premium still decides
@@ -55,6 +55,31 @@ package.json (the version Mod SDK manifests are checked against).
   own paks.
 
 ### Also in 1.0.0 — work that followed upstream 1.9.14
+
+**Credentials: encrypted at rest, never in plain text**
+- The Nexus API key is never written to disk in plain text. The old fallback
+  that stored it unencrypted when the OS key store was unavailable is gone:
+  without a secure store (including Linux's `basic_text`) the key is kept for
+  the session only, and Settings → Nexus Mods says so. On Linux X asks for a
+  real keyring (libsecret) where Chromium would otherwise fall back.
+- Startup migration: a plaintext `nexusApiKey` is encrypted (or moved into
+  memory) and deleted from `manager-data.json`, a leftover `.tmp` copy and the
+  game-side archive mirror. Leftover upstream OAuth fields are dropped. The
+  archive mirror never carries the key, not even encrypted.
+- Clear wipes both stored fields and the in-memory copy.
+- One redactor (`lib/redact.js`) for the session log, the support report and
+  error messages sent to the UI: the key, `apikey` headers, nxm
+  `key=`/`expires=` and signed download-URL query strings are masked. An
+  unusable nxm link in an error no longer echoes its key.
+- Release builds encrypt the Nexus website panel's cookies at rest
+  (`EnableCookieEncryption` fuse via an electron-builder afterPack hook,
+  `@electron/fuses` 1.8.0) and disable `NODE_OPTIONS` and `--inspect`.
+  `RunAsNode` stays on for the Mod SDK workbench. Dev runs keep cookies
+  unencrypted.
+- Settings → Nexus Mods → **Sign out of the Nexus website panel** clears the
+  panel's login (cookies, site data, cache).
+- Owner tools fall back to `gh auth token` (the GitHub CLI's credential store)
+  instead of needing a token file.
 
 **One click to download — premium or free**
 - Every Nexus download button is now one click: Holonet ⭳ Install and
