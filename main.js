@@ -17,7 +17,10 @@ const { spawn } = require('child_process');
 // THAT is the quarantined file Windows fails the launch before any JavaScript
 // runs and this check never executes. It catches the lazily loaded graphics
 // DLLs (and reports ffmpeg.dll too, for the cases where we do get to run).
-const RUNTIME_DLLS = ['ffmpeg.dll', 'libEGL.dll', 'libGLESv2.dll', 'd3dcompiler_47.dll'];
+// The DLLs the Electron runtime ships next to the exe (Electron 44: ANGLE is
+// linked into the exe, so libEGL.dll / libGLESv2.dll no longer exist — listing
+// them made every packaged launch report them "missing").
+const RUNTIME_DLLS = ['ffmpeg.dll', 'd3dcompiler_47.dll', 'dxcompiler.dll', 'dxil.dll', 'vk_swiftshader.dll', 'vulkan-1.dll'];
 
 function checkRuntimeFiles() {
   if (process.platform !== 'win32' || !app.isPackaged) return;
@@ -81,7 +84,11 @@ const report = require('./lib/report');
 // installed. It carries no copy of that UI — see lib/sdk-link.js and
 // docs/SDK_LINK.md.
 const sdkLink = require('./lib/sdk-link');
-const { configureNexusSession } = require('./lib/nexus-browser');
+const { configureBrowserIdentity, configureNexusSession, learnClientHints } = require('./lib/nexus-browser');
+// Before 'ready': every renderer, out-of-process iframe and worker (the Nexus
+// panel's Cloudflare Turnstile frame included) presents the plain Chrome user
+// agent, not Electron's — see lib/nexus-browser.js.
+configureBrowserIdentity(app);
 
 // App data (settings, staging, indexes) lives in the OS per-user app-data
 // folder — %APPDATA%\ModCommandX on Windows — never beside the exe.
@@ -586,6 +593,9 @@ function pinPlanToParent(plan, modId, fileId, updates, parentMod) {
 async function handleNxm(rawUrl) {
   try {
     const link = nexus.parseNxm(rawUrl);
+    // Resolves the renderer's "Waiting for Nexus download…" chip for this file
+    // (free downloads finished in the user's own web browser).
+    sendEvent({ type: 'nxm-received', modId: link.modId, fileId: link.fileId });
     const token = await nexusAccessToken();
     sendEvent({ type: 'toast', message: `Nexus download requested (mod ${link.modId})…` });
     let info = null;
@@ -811,6 +821,10 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // The Nexus panel's navigations and worker requests carry the same Sec-CH-UA
+  // client hints Chrome sends (read from this window's own Chromium; see
+  // lib/nexus-browser.js).
+  win.webContents.once('did-finish-load', () => { learnClientHints(win.webContents); });
 
   // The SDK link hosts a WebContentsView inside THIS window, so it can only be
   // configured once the window exists. Linking itself is deferred to the
@@ -901,10 +915,9 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   log('info', `app start v${app.getVersion()} on ${process.platform} ${require('os').release()}`);
-  // The Nexus panel presents the bundled Chromium's plain Chrome user agent, not
-  // Electron's (which names Electron and this app and makes Cloudflare treat
-  // the panel as a bot). See lib/nexus-browser.js.
-  try { configureNexusSession(session); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
+  // The Nexus panel's session uses the same plain Chrome user agent as the
+  // app-wide fallback set above. See lib/nexus-browser.js.
+  try { configureNexusSession(session, app); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
   // Load the stored Nexus API key (migrating a plaintext one to the OS store)
   // and look up who it belongs to in the background.
   try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
@@ -1529,6 +1542,7 @@ const handlers = {
     delete patch.nexusApiKeyEncrypted;
     delete patch.hasNexusKey;
     if ('theme' in patch && !Object.prototype.hasOwnProperty.call(THEMES, patch.theme)) delete patch.theme;
+    if ('nexusDownloadVia' in patch && !['panel', 'browser'].includes(patch.nexusDownloadVia)) delete patch.nexusDownloadVia;
     Object.assign(store.settings, patch);
     store.save();
     if (patch.theme && win && !win.isDestroyed()) win.setBackgroundColor(THEMES[patch.theme]);
@@ -1646,6 +1660,15 @@ const handlers = {
     const p = map[kind];
     if (!p || !fs.existsSync(p)) throw new Error('That folder does not exist yet.');
     await shell.openPath(p);
+    return true;
+  },
+
+  // Settings -> "Where to finish free downloads" = My web browser: the exact
+  // file's download page in the system browser (where the user is normally
+  // signed in already); its Slow download comes back through nxm://.
+  'open-nexus-file-page': async (_e, { modId, fileId }) => {
+    if (!(Number(modId) > 0) || !(Number(fileId) > 0)) throw new Error('Unknown Nexus file.');
+    await shell.openExternal(nexus.fileDownloadPage(modId, fileId));
     return true;
   },
 

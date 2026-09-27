@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('zc', {
   launchGameDirect: () => invoke('launch-game-direct'),
   openManagedPath: (kind) => invoke('open-managed-path', { kind }),
   openExternal: (url) => invoke('open-external', { url }),
+  openNexusFilePage: (modId, fileId) => invoke('open-nexus-file-page', { modId, fileId }),
   runDiagnostics: () => invoke('run-diagnostics'),
   suggestLoadOrder: () => invoke('suggest-load-order'),
   saveProfile: (name) => invoke('save-profile', { name }),

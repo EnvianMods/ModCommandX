@@ -14,7 +14,7 @@
 //     Node build scripts with this exe + ELECTRON_RUN_AS_NODE=1 when the user
 //     has no `node` on PATH. Turning the fuse off would break SDK builds there.
 //
-// Pinned to @electron/fuses 1.8.0 (CommonJS, fuse wire v1 — Electron 33).
+// Pinned to @electron/fuses 1.8.0 (CommonJS, fuse wire v1 — still the wire Electron 44 uses; it reads Electron 44's newer fuses as unnamed and leaves them alone).
 const path = require('path');
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 
