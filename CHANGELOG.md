@@ -236,9 +236,12 @@ package.json (the version Mod SDK manifests are checked against).
   mod. Tick *"Also delete my stored mod library (mods you switched off live
   only here and would be lost)"* to delete it; the warning names the
   switched-off mods that would be lost and the game-file mods whose original
-  files are backed up there. In an archive shared with the main Mod Command
-  only the entries X alone uses are deleted — whatever the main app lists,
-  and the archive folder and its manifest, always stay.
+  files are backed up there. In the archive shared with the main Mod Command
+  (`<game>\ModCommandArchive`) only the entries X alone uses are deleted —
+  whatever the main app's own settings or the shared mod list name stays,
+  and so do the archive folder and its `manager-data.json`, from which only
+  Mod Command X's own block, profiles and X-only records are taken out (the
+  main app's records keep their exact bytes).
 - Safe by construction: deletes only inside an allow-list of Mod Command X's
   own folders, every path resolved and checked, links removed as links and
   never followed, never a drive root, the game folder, `%APPDATA%` or

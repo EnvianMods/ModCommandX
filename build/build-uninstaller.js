@@ -42,7 +42,11 @@ function build({ quiet, archiveName, out } = {}) {
   if (!csc) throw new Error('csc.exe (.NET Framework 4.x) not found — it ships with Windows 10/11; is the .NET Framework 4.8 feature disabled?');
 
   // The archive folder name comes from the app's own code, never a copy.
-  const ARCHIVE_DIR_NAME = archiveName || require(path.join(ROOT, 'lib', 'storage.js')).ARCHIVE_DIR_NAME;
+  const storage = require(path.join(ROOT, 'lib', 'storage.js'));
+  const ARCHIVE_DIR_NAME = archiveName || storage.ARCHIVE_DIR_NAME;
+  // X's own pre-shared archive (lib/storage.js OLD_X_ARCHIVE_DIR_NAME).
+  const OLD_X_ARCHIVE_DIR_NAME = storage.OLD_X_ARCHIVE_DIR_NAME || 'ModCommandXArchive';
+  if (!/^[\w .-]+$/.test(OLD_X_ARCHIVE_DIR_NAME)) throw new Error(`unexpected OLD_X_ARCHIVE_DIR_NAME ${JSON.stringify(OLD_X_ARCHIVE_DIR_NAME)}`);
   const outExe = out ? path.resolve(out) : OUT_EXE;
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   if (!/^[\w .-]+$/.test(ARCHIVE_DIR_NAME)) throw new Error(`unexpected ARCHIVE_DIR_NAME ${JSON.stringify(ARCHIVE_DIR_NAME)}`);
@@ -60,6 +64,7 @@ function build({ quiet, archiveName, out } = {}) {
     'namespace ModCommandXUninstaller {',
     '  static class BuildInfo {',
     `    public const string ArchiveDirName = ${JSON.stringify(ARCHIVE_DIR_NAME)}; // lib/storage.js ARCHIVE_DIR_NAME`,
+    `    public const string OldXArchiveDirName = ${JSON.stringify(OLD_X_ARCHIVE_DIR_NAME)}; // lib/storage.js OLD_X_ARCHIVE_DIR_NAME`,
     `    public const string AppVersion = ${JSON.stringify(pkg.version)};`,
     '  }',
     '}',

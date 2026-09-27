@@ -540,7 +540,7 @@ offers to close it).
 | `%APPDATA%\Mod Command X` — the Electron profile: the Nexus panel's cookies (`Partitions\nexus`), caches | UE4SS `mods.txt` incl. the start-order block (its lines keep your UE4SS mods switched on; the marker is shared with Mod Command) |
 | `%TEMP%\ModCommandX` — the portable exe's unpack folder | `*.zcbak` original-config backups (shared naming with Mod Command) and `%TEMP%\zc-retoc` |
 | `ModCommandX.exe`, the release `README.txt` / `CHANGELOG.md` (only if they are X's), and the uninstaller itself (deleted right after it closes) | **your stored mod library** (unless you tick the box, below) |
-| `HKCU\Software\Classes\nxm` — **only** if its `shell\open\command` points at `ModCommandX.exe` (or a dev run of an X checkout). If it points at the main Mod Command or another manager it is left alone and the list says so | everything of the upstream Zero Company Mod Command: `%APPDATA%\ZeroCompanyModCommand`, its profile, its archive |
+| `HKCU\Software\Classes\nxm` — **only** if its `shell\open\command` points at `ModCommandX.exe` (or a dev run of an X checkout). If it points at the main Mod Command or another manager it is left alone and the list says so | everything of the upstream Zero Company Mod Command: `%APPDATA%\ZeroCompanyModCommand`, its profile, the shared `ModCommandArchive` folder and every entry it uses |
 | the **Steam update freeze**, if X set it: the appmanifest is made writable and `AutoUpdateBehavior` set to `0`, exactly like Settings → freeze off (left on when the main Mod Command also froze the game) | |
 | `data\` of a source checkout (dev runs), when the uninstaller runs from one | the source files of that checkout |
 
@@ -550,12 +550,21 @@ only here and would be lost)"* is **unchecked** by default: the library (`librar
 everything from it — the window says where it is. Ticked, the warning counts the
 switched-off mods that would be lost (read from X's `manager-data.json`) and the
 switched-on game-file mods whose original game files are backed up there. When the
-archive is **shared with Mod Command** (`<game>\ModCommandArchive`), only entries X
-alone uses are ever deleted: anything the main app's `manager-data.json` (or the
-archive's own manifest) lists is kept, as are the archive folder, its
-`manager-data.json` and `versions\ue4ss-runtime`. A leftover `<game>\ModCommandXArchive`
-is removed when empty or when the box is ticked. The archive folder name is read
-from `lib/storage.js` (`ARCHIVE_DIR_NAME`) at build time.
+archive is **shared with Mod Command** (`<game>\ModCommandArchive`, the default since
+the shared-archive change), only entries X alone uses are ever deleted — the same
+rule as `lib/storage.js` `upstreamRefs()` / `mirrorUpstreamIds()`, taken as a union:
+anything the main app's `%APPDATA%\ZeroCompanyModCommand\manager-data.json` lists, or
+the mirror's records the main app owns (all of them when it wrote the mirror last,
+else the `modCommandX` block's `upstreamIds`), is kept, and so are the archive folder,
+`versions\ue4ss-runtime` and, when the mirror cannot be read, everything in it. The
+mirror `manager-data.json` itself is never deleted: with the box ticked only X's part
+leaves it — the `modCommandX` block, X's profiles, the records of the X-only mods
+removed, and the settings block when X created the mirror — and the rest is written
+back exactly as `JSON.stringify(v, null, 2)` wrote it, so the main app's records keep
+their bytes. Unticked, the mirror is left alone (a reinstall restores from it). A
+leftover `<game>\ModCommandXArchive` is removed when empty or when the box is ticked.
+`ARCHIVE_DIR_NAME` and `OLD_X_ARCHIVE_DIR_NAME` are read from `lib/storage.js` at
+build time.
 
 **Safety.** Deletes happen only inside an allow-list of X-owned roots; every path is
 resolved and checked (never a drive root, the game folder, `%APPDATA%`, `%TEMP%`, the

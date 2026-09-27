@@ -51,7 +51,7 @@ namespace ModCommandXUninstaller
         public const string DataDirName = "ModCommandX";            // main.js APPDATA_DIR_NAME
         public const string ProfileDirName = "Mod Command X";       // Electron userData = package.json productName
         public const string UnpackDirName = "ModCommandX";          // package.json build.portable.unpackDirName
-        public const string XArchiveDirName = "ModCommandXArchive"; // X's own game-side archive (pre-shared builds)
+        public const string XArchiveDirName = BuildInfo.OldXArchiveDirName; // X's own archive before it shared Mod Command's
         public const string UpstreamArchiveDirName = "ModCommandArchive";
         public const string UpstreamLegacyArchiveDirName = "ZeroCompanyModArchive";
         public const string UpstreamDataDirName = "ZeroCompanyModCommand";
@@ -65,9 +65,10 @@ namespace ModCommandXUninstaller
         public static readonly string GameExeRel = @"SWZeroCompany\Binaries\Win64\SWZeroCompany.exe";
         public static readonly string[] SecretKeys = { "nexusApiKey", "nexusApiKeyEncrypted", "nexusOAuth", "nexusOAuthEncrypted" };
         public static readonly string[] LibrarySubdirs = { "library", "backups", "versions" };
-        // A manifest mirror in a SHARED archive is X's only when its name says so;
-        // the archive's plain manager-data.json belongs to the upstream app.
-        public static readonly Regex XMirrorName = new Regex(@"^(mod-?command-?x|modcommandx|manager-data[-_.]?x|mcx)[-\w.]*\.json$", RegexOptions.IgnoreCase);
+        // lib/storage.js MIRROR_FILE / X_BLOCK: the shared archive's manifest
+        // mirror, and X's own bookkeeping block inside it.
+        public const string MirrorFile = "manager-data.json";
+        public const string XBlock = "modCommandX";
     }
 
     // ------------------------------------------------------------------ options
@@ -183,9 +184,10 @@ namespace ModCommandXUninstaller
         public List<ModRec> Mods = new List<ModRec>();
         public HashSet<string> ProfileVaultKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        public static ManagerData Load(string file)
+        public static ManagerData Load(string file) { return FromRaw(J.ReadFile(file), file); }
+
+        public static ManagerData FromRaw(Dictionary<string, object> raw, string file)
         {
-            var raw = J.ReadFile(file);
             if (raw == null) return null;
             var md = new ManagerData { File = file, Raw = raw, Settings = J.Obj(raw, "settings") ?? new Dictionary<string, object>() };
             foreach (var o in J.Arr(raw, "mods"))
@@ -213,6 +215,117 @@ namespace ModCommandXUninstaller
         public string GamePath { get { return J.Str(Settings, "gamePath"); } }
         public string StorageDir { get { return J.Str(Settings, "storageDir"); } }
         public bool UpdateFreeze { get { return J.Bool(Settings, "updateFreeze"); } }
+    }
+
+    // Port of lib/storage.js mirrorUpstreamIds(): the ids the MAIN app references
+    // according to a mirror - every record when upstream wrote it last (no X
+    // block), else the upstreamIds X carried forward when it last wrote it.
+    static class Mirror
+    {
+        public static HashSet<string> UpstreamIds(Dictionary<string, object> mirror)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (mirror == null) return ids;
+            var block = J.Obj(mirror, K.XBlock);
+            if (block != null) { foreach (var id in J.Arr(block, "upstreamIds")) ids.Add(Convert.ToString(id)); return ids; }
+            foreach (var m in J.Arr(mirror, "mods"))
+            {
+                var id = J.Str(m as Dictionary<string, object>, "id");
+                if (id != null) ids.Add(id);
+            }
+            return ids;
+        }
+    }
+
+    // JSON text exactly as JavaScript's JSON.stringify(value, null, 2) writes it,
+    // so the main app's records in a shared mirror keep their bytes.
+    static class JsonText
+    {
+        static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
+        public static string Stringify(object v)
+        {
+            var sb = new StringBuilder();
+            Write(sb, v, "");
+            return sb.ToString();
+        }
+
+        static void Write(StringBuilder sb, object v, string indent)
+        {
+            if (v == null) { sb.Append("null"); return; }
+            if (v is string) { Str(sb, (string)v); return; }
+            if (v is bool) { sb.Append((bool)v ? "true" : "false"); return; }
+            if (v is int || v is long || v is short || v is byte || v is uint || v is ulong) { sb.Append(Convert.ToString(v, Inv)); return; }
+            if (v is decimal) { sb.Append(Num(((decimal)v).ToString(Inv))); return; }
+            if (v is double || v is float)
+            {
+                double d = Convert.ToDouble(v);
+                sb.Append(double.IsNaN(d) || double.IsInfinity(d) ? "null" : Num(d.ToString("R", Inv)));
+                return;
+            }
+            var dict = v as IDictionary<string, object>;
+            if (dict != null)
+            {
+                if (dict.Count == 0) { sb.Append("{}"); return; }
+                string inner = indent + "  ";
+                sb.Append("{\n");
+                bool first = true;
+                foreach (var kv in dict)
+                {
+                    if (!first) sb.Append(",\n");
+                    first = false;
+                    sb.Append(inner); Str(sb, kv.Key); sb.Append(": "); Write(sb, kv.Value, inner);
+                }
+                sb.Append("\n").Append(indent).Append("}");
+                return;
+            }
+            var list = v as System.Collections.IEnumerable;
+            if (list != null)
+            {
+                var items = list.Cast<object>().ToList();
+                if (items.Count == 0) { sb.Append("[]"); return; }
+                string inner = indent + "  ";
+                sb.Append("[\n");
+                for (int i = 0; i < items.Count; i++)
+                {
+                    if (i > 0) sb.Append(",\n");
+                    sb.Append(inner); Write(sb, items[i], inner);
+                }
+                sb.Append("\n").Append(indent).Append("]");
+                return;
+            }
+            Str(sb, Convert.ToString(v, Inv));
+        }
+
+        // JS never prints a trailing fractional zero ("1.50" -> 1.5, "2.0" -> 2).
+        static string Num(string text)
+        {
+            if (text.Contains(".") && !text.Contains("E") && !text.Contains("e")) text = text.TrimEnd('0').TrimEnd('.');
+            return text;
+        }
+
+        static void Str(StringBuilder sb, string s)
+        {
+            sb.Append('"');
+            foreach (char c in s)
+            {
+                switch (c)
+                {
+                    case '"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < 0x20) sb.Append("\\u").Append(((int)c).ToString("x4"));
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            sb.Append('"');
+        }
     }
 
     static class Util
@@ -322,7 +435,7 @@ namespace ModCommandXUninstaller
 
     // ------------------------------------------------------------------ plan
     enum Act { Remove, Keep, Restore, Note, Warn }
-    enum Kind { None, Dir, File, RegKey, Unfreeze, ScrubSettings }
+    enum Kind { None, Dir, File, RegKey, Unfreeze, ScrubSettings, MirrorScrub }
 
     class PlanItem
     {
@@ -336,6 +449,7 @@ namespace ModCommandXUninstaller
         public string Note;
         public bool Library;      // part of the stored mod library (checkbox-dependent)
         public string Result;     // after execution: "removed", "failed: ...", ...
+        public List<string> RemoveIds; // MirrorScrub: X-only record ids to take out
     }
 
     class Plan
@@ -470,10 +584,31 @@ namespace ModCommandXUninstaller
                 string legacy = Util.Full(Path.Combine(plan.GamePath, K.XArchiveDirName));
                 if (Directory.Exists(legacy) && !xOnlyArchives.Any(r => Util.Same(r, legacy))) xOnlyArchives.Add(legacy);
             }
+            // What the main app references in a shared archive: a port of
+            // lib/storage.js upstreamRefs() + mirrorUpstreamIds(), taken as a UNION
+            // (its manifest above, plus the mirror's records it owns: all of them
+            // when it wrote the mirror last, else the X block's upstreamIds).
+            // Anything either source names is kept.
+            var xBlocks = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+            var unreadable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in sharedRoots)
             {
-                var mirror = ManagerData.Load(Path.Combine(r, "manager-data.json"));
-                addUp(mirror); // conservative: whatever the shared mirror lists is kept
+                string mf = Path.Combine(r, K.MirrorFile);
+                var raw = J.ReadFile(mf);
+                if (raw == null) { if (File.Exists(mf)) unreadable.Add(r); continue; }
+                var block = J.Obj(raw, K.XBlock);
+                if (block != null) xBlocks[r] = block;
+                var ids = Mirror.UpstreamIds(raw);
+                upIds.UnionWith(ids);
+                var mirror = ManagerData.FromRaw(raw, mf);
+                foreach (var m in mirror.Mods) if (ids.Contains(m.Id)) upKeys.Add(m.VaultKey);
+                var xProfiles = new HashSet<string>(J.Arr(block, "profileIds").Select(Convert.ToString));
+                foreach (var p in J.Arr(raw, "profiles"))
+                {
+                    var pd = p as Dictionary<string, object>;
+                    if (pd == null || xProfiles.Contains(Convert.ToString(J.Has(pd, "id") ? pd["id"] : ""))) continue;
+                    foreach (var e in J.Arr(pd, "entries")) { var k = J.Str(e as Dictionary<string, object>, "vaultKey"); if (k != null) upKeys.Add(k); }
+                }
             }
             plan.SharedArchive = sharedRoots.Any(Directory.Exists);
 
@@ -561,12 +696,14 @@ namespace ModCommandXUninstaller
             {
                 if (!Directory.Exists(root)) continue;
                 plan.LibraryLocations.Add(root);
+                bool unknown = unreadable.Contains(root);
                 Add(plan, Act.Keep, Kind.None, "Your mod library", "Mod archive shared with Mod Command (" + Path.GetFileName(root) + ")", root, null,
-                    "the folder and its manager-data.json belong to Mod Command too and are never removed");
+                    unknown ? "its manager-data.json cannot be read, so nothing in it is removed"
+                            : "the folder and its manager-data.json belong to Mod Command too and are never removed");
                 Action<string, bool, string> entry = (path, upstreamUses, label) =>
                 {
                     if (!Directory.Exists(path)) return;
-                    if (upstreamUses)
+                    if (upstreamUses || unknown)
                     {
                         plan.SharedKept++;
                         var k = Add(plan, Act.Keep, Kind.Dir, "Your mod library", label, path, null, "Mod Command also uses it - kept");
@@ -577,26 +714,41 @@ namespace ModCommandXUninstaller
                         deleteLibrary ? "used only by Mod Command X" : "kept so a reinstall restores it");
                     it.Library = true;
                 };
-                foreach (var m in xMods)
+                // X's mods: its own settings, plus the records its X block in the
+                // mirror claims (covers an X whose app data is already gone).
+                var rootMods = new List<ModRec>(xMods);
+                var rootKeys = new HashSet<string>(xVaultKeys, StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, object> block;
+                if (xBlocks.TryGetValue(root, out block))
+                {
+                    var claimed = new HashSet<string>(J.Arr(block, "modIds").Select(Convert.ToString));
+                    var mirror = ManagerData.Load(Path.Combine(root, K.MirrorFile));
+                    foreach (var m in mirror.Mods)
+                        if (claimed.Contains(m.Id) && !rootMods.Any(x => x.Id == m.Id)) { rootMods.Add(m); rootKeys.Add(m.VaultKey); }
+                }
+                foreach (var m in rootMods)
                 {
                     entry(Path.Combine(root, "library", m.Id), upIds.Contains(m.Id), "Stored mod: " + m.Name + (m.Enabled ? "" : " (switched off)"));
                     entry(Path.Combine(root, "backups", "gamefiles", m.Id), upIds.Contains(m.Id), "Original game files replaced by: " + m.Name);
                 }
-                foreach (var key in xVaultKeys)
-                    entry(Path.Combine(root, "versions", key), upKeys.Contains(key), "Older versions: " + key);
-                // X's own manifest mirror inside a shared archive (never the plain manager-data.json).
-                try
+                foreach (var key in rootKeys)
                 {
-                    foreach (var f in Directory.EnumerateFiles(root, "*.json"))
-                    {
-                        string name = Path.GetFileName(f);
-                        if (!K.XMirrorName.IsMatch(name)) continue;
-                        var it = Add(plan, deleteLibrary ? Act.Remove : Act.Keep, Kind.File, "Your mod library", "Mod Command X's mod list in the archive (" + name + ")", f, root,
-                            deleteLibrary ? null : "kept so a reinstall restores the list");
-                        it.Library = true;
-                    }
+                    if (string.Equals(key, "ue4ss-runtime", StringComparison.OrdinalIgnoreCase)) continue; // runtime builds: never X's alone
+                    entry(Path.Combine(root, "versions", key), upKeys.Contains(key), "Older versions: " + key);
                 }
-                catch { }
+                // The mirror (manager-data.json) is shared: with the box ticked only
+                // X's own part leaves it - the modCommandX block, X's profiles and the
+                // records of the mods removed above. Mod Command's records stay as they are.
+                if (block != null && !unknown)
+                {
+                    var it = Add(plan, deleteLibrary ? Act.Remove : Act.Keep, Kind.MirrorScrub, "Your mod library",
+                        deleteLibrary ? "Mod Command X's entries in the shared mod list (the file itself stays)" : "Mod Command X's entries in the shared mod list",
+                        Path.Combine(root, K.MirrorFile), root,
+                        deleteLibrary ? "only X's block and X-only records are taken out; Mod Command's records stay byte-for-byte"
+                                      : "kept so a reinstall restores the list");
+                    it.Library = true;
+                    it.RemoveIds = rootMods.Where(m => !upIds.Contains(m.Id)).Select(m => m.Id).ToList();
+                }
             }
 
             // Library warning numbers (what ticking the box would lose).
@@ -958,6 +1110,7 @@ namespace ModCommandXUninstaller
                         if (it.Result != "restored") Errors++;
                     }
                     else if (it.Action == Act.Keep && it.Kind == Kind.ScrubSettings) ScrubSecrets(it);
+                    else if (it.Action == Act.Remove && it.Kind == Kind.MirrorScrub) ScrubMirror(it);
                     else if (it.Action == Act.Keep) log.Line("KEPT " + (it.Path ?? it.Label));
                 }
                 catch (Exception e)
@@ -1064,6 +1217,53 @@ namespace ModCommandXUninstaller
             InUse.Add(p + (scheduled ? " (removed at next restart)" : ""));
             log.Line("IN USE " + p + (scheduled ? " - scheduled for removal at next restart" : " - left in place") + " (" + (last == null ? "" : last.Message) + ")");
             return 0;
+        }
+
+        // Shared mirror: take out only what is X's (lib/storage.js mergeMirror
+        // wrote it): the modCommandX block, X's profiles, the records of X-only
+        // mods, and X's settings block when X created the mirror. Everything else
+        // is written back exactly as JSON.stringify(v, null, 2) wrote it.
+        void ScrubMirror(PlanItem it)
+        {
+            string why = Refusal(it.Path, it.AllowRoot, plan);
+            if (why != null) { it.Result = "refused: " + why; Refused.Add(it.Path); log.Line("REFUSED " + it.Path + " (" + why + ")"); return; }
+            var raw = J.ReadFile(it.Path);
+            if (raw == null) { it.Result = "skipped (unreadable)"; log.Line("SKIPPED " + it.Path + " (unreadable)"); return; }
+            var block = J.Obj(raw, K.XBlock);
+            if (block == null) { it.Result = "nothing of Mod Command X's left in it"; return; }
+            var drop = new HashSet<string>(it.RemoveIds ?? new List<string>());
+            var xProfiles = new HashSet<string>(J.Arr(block, "profileIds").Select(x => Convert.ToString(x)));
+            int removedMods = 0, removedProfiles = 0;
+            var mods = raw.ContainsKey("mods") ? raw["mods"] as object[] : null;
+            if (mods != null)
+            {
+                var keep = mods.Where(m => !drop.Contains(J.Str(m as Dictionary<string, object>, "id") ?? "\u0000")).ToArray();
+                removedMods = mods.Length - keep.Length;
+                raw["mods"] = keep;
+            }
+            var profiles = raw.ContainsKey("profiles") ? raw["profiles"] as object[] : null;
+            if (profiles != null)
+            {
+                var keep = profiles.Where(p =>
+                {
+                    var pd = p as Dictionary<string, object>;
+                    return pd == null || !pd.ContainsKey("id") || !xProfiles.Contains(Convert.ToString(pd["id"]));
+                }).ToArray();
+                removedProfiles = profiles.Length - keep.Length;
+                raw["profiles"] = keep;
+            }
+            if (J.Bool(block, "ownsSettings"))
+            {
+                if (raw.ContainsKey("settings")) raw["settings"] = new Dictionary<string, object>();
+                if (raw.ContainsKey("lastOrderBackup")) raw["lastOrderBackup"] = null;
+            }
+            raw.Remove(K.XBlock);
+            string tmp = it.Path + ".mcx-uninstall.tmp";
+            File.WriteAllText(tmp, JsonText.Stringify(raw), new UTF8Encoding(false));
+            File.Copy(tmp, it.Path, true);
+            File.Delete(tmp);
+            it.Result = "Mod Command X's part removed (" + removedMods + " record(s), " + removedProfiles + " profile(s))";
+            log.Line("MIRROR " + it.Path + ": X block, " + removedMods + " X-only record(s), " + removedProfiles + " profile(s) removed");
         }
 
         // Keep a stored-library manifest but strip every credential from it.
