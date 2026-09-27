@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -56,6 +56,11 @@ function checkRuntimeFiles() {
 }
 checkRuntimeFiles();
 
+// Test harness override (like ZC_DATA_DIR below): a separate Electron userData —
+// its own persist:nexus cookies and single-instance lock — so a test run never
+// touches the user's real %APPDATA%\Mod Command X.
+if (process.env.MCX_USER_DATA_DIR) app.setPath('userData', process.env.MCX_USER_DATA_DIR);
+
 const { Store } = require('./lib/store');
 const steam = require('./lib/steam');
 const { ModEngine, compareVersions, MODS_REL, LOGIC_MODS_REL, WIN64_REL, UE4SS_MODS_REL, GAME_MODS_REL } = require('./lib/mods');
@@ -76,6 +81,7 @@ const report = require('./lib/report');
 // installed. It carries no copy of that UI — see lib/sdk-link.js and
 // docs/SDK_LINK.md.
 const sdkLink = require('./lib/sdk-link');
+const { configureNexusSession } = require('./lib/nexus-browser');
 
 // App data (settings, staging, indexes) lives in the OS per-user app-data
 // folder — %APPDATA%\ModCommandX on Windows — never beside the exe.
@@ -765,6 +771,10 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   log('info', `app start v${app.getVersion()} on ${process.platform} ${require('os').release()}`);
+  // The Nexus panel presents the bundled Chromium's plain Chrome user agent, not
+  // Electron's (which names Electron and this app and makes Cloudflare treat
+  // the panel as a bot). See lib/nexus-browser.js.
+  try { configureNexusSession(session); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
   // Load the stored Nexus API key (migrating a plaintext one to the OS store)
   // and look up who it belongs to in the background.
   try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
