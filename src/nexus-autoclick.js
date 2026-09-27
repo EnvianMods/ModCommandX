@@ -1,0 +1,260 @@
+'use strict';
+// ============================================================================
+// Nexus auto-click — the ONE place that knows what the Nexus download page
+// looks like. When Nexus changes its page, this is the file to update.
+// ============================================================================
+//
+// What it is for: a FREE Nexus account cannot get a download link from the
+// API; the website must start the download. Mod Command X opens the embedded
+// Nexus panel (<webview partition="persist:nexus">) straight at the exact
+// file's download page
+//     https://www.nexusmods.com/{game}/mods/{modId}?tab=files&file_id={fileId}&nmm=1
+// and this script presses the buttons the user would press: "Slow download",
+// then any follow-up "Mod Manager Download" / nxm:// link the page shows. The
+// nxm:// link the site then emits is caught by the main process (main.js,
+// web-contents-created → handleNxm), which downloads and installs the file.
+//
+// House rules — these are deliberate, keep them when editing:
+//  - The page stays VISIBLE and untouched: nothing is hidden, stripped or
+//    restyled, ads included.
+//  - Nexus's own wait is never bypassed or shortened. A button is pressed only
+//    when the SITE has made it visible and enabled; a countdown is waited out.
+//  - Each kind of button is pressed at most ONCE per page load (the agent's
+//    state lives on the page's window, so a reload starts fresh — no loops).
+//  - A CAPTCHA / bot check / any challenge iframe stops the automation for
+//    that page load. It is never solved, skipped or worked around; the user
+//    deals with it and presses the button themselves.
+//  - It only ever runs on the exact www.nexusmods.com file page that Mod
+//    Command X's own one-click flow opened (isTargetPage), never on anything
+//    else the user browses to in the panel.
+//  - It can be switched off: Settings → Nexus Mods → "Auto-click Nexus
+//    download for free accounts". Off, the panel still opens at the exact file.
+//
+// How it runs: the renderer (src/app.js) calls
+//     webview.executeJavaScript(NexusAutoclick.stepCode(target), true)
+// every ~600 ms while the panel shows the target page. Each call is one step:
+// it installs the agent on first use, looks at the page once, presses at most
+// one button, and returns a report { phase, countdown, clicked } that drives
+// the panel's status strip. The agent itself sets no timers. The `true`
+// (userGesture) is what a real click would carry, so a site handler that
+// opens the nxm:// link behaves exactly as if the user had clicked.
+//
+// Phases: 'searching' (looking for the button), 'waiting' (the button is there
+// but the site has not enabled it yet), 'clicked' (a button was pressed; the
+// site's countdown / handoff is running), 'login' (the page wants a signed-in
+// account), 'challenge' (bot check present — stopped), 'fallback' (nothing
+// usable found in time — stopped; the user clicks).
+//
+// Everything below the RULES block is generic; the RULES block is the part
+// that tracks the site.
+
+(function (root) {
+  // --------------------------------------------------------------- RULES
+  // Regexes are written as [source, flags] so they survive the trip into the
+  // page as JSON.
+  const RULES = {
+    // The free, rate-limited download on the file's download page.
+    slowDownload: {
+      selectors: ['#slowDownloadButton', '[data-testid="slow-download"]', '[data-e2e="slow-download"]'],
+      text: ['^\\s*slow\\s+download\\b', 'i'],
+    },
+    // The button on a file row (or the follow-up on the chooser page) that
+    // leads to the nxm:// handoff for a mod manager. Only pressed when it is
+    // for OUR file (see matchesFile) or it is the only one on the page.
+    managerDownload: {
+      selectors: ['[data-testid="mod-manager-download"]'],
+      text: ['mod\\s+manager\\s+download', 'i'],
+    },
+    // Never press these, whatever else they say (premium upsells).
+    avoidText: ['\\b(fast|premium|upgrade|subscribe|membership)\\b', 'i'],
+    // A plain nxm:// link the page shows ("click here if your download does
+    // not start") — pressed once when it is for our file.
+    nxmLink: 'a[href^="nxm:"]',
+    // Anything that can be clicked, in the light DOM and in open shadow roots.
+    clickable: 'button, a[href], [role="button"], input[type="button"], input[type="submit"]',
+    // "Your download will begin in 5 seconds" style text — read only, to show
+    // the countdown in the status strip.
+    countdown: [
+      ['(?:download|start|begin|ready)[^\\n.]{0,60}?\\b(\\d{1,3})\\s*(?:seconds?|secs?|s)\\b', 'i'],
+      ['\\b(\\d{1,3})\\s*(?:seconds?|secs?)\\b[^\\n.]{0,40}?(?:download|start|begin)', 'i'],
+      ['\\b(?:wait|in)\\s+(\\d{1,3})\\s*(?:seconds?|secs?)\\b', 'i'],
+    ],
+    // Bot checks / CAPTCHAs. Any hit stops the automation for this page load.
+    challenge: {
+      selectors: [
+        'iframe[src*="challenges.cloudflare.com"]', 'iframe[src*="turnstile"]',
+        'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', 'iframe[title*="challenge" i]',
+        '#challenge-form', '#challenge-stage', '#challenge-error-text', '#cf-challenge-running',
+        '.cf-turnstile', '.g-recaptcha', '.h-captcha', '[data-sitekey]',
+      ],
+      title: ['^\\s*just a moment', 'i'],
+      text: ['performing security verification|verify(?:ing)? (?:that )?you are (?:a )?human|checking (?:if the site connection is secure|your browser)', 'i'],
+    },
+    // The page wants a signed-in account before it offers the download.
+    login: {
+      text: ['\\b(?:log|sign)\\s*in to download\\b|you (?:need|must|have) to (?:be )?(?:logged|signed) in|please (?:log|sign) in', 'i'],
+    },
+    // How long a page may show nothing usable (no button, no countdown)
+    // before the user is asked to click themselves.
+    giveUpMs: 20000,
+  };
+
+  // ------------------------------------------------------ in-page agent
+  // Serialised with Function.prototype.toString and run inside the guest page,
+  // so it must be self-contained: no closures over this file.
+  function agentStep(R, target) {
+    const rx = (p) => new RegExp(p[0], p[1]);
+    const now = Date.now();
+    let A = window.__mcxAutoclick;
+    if (!A || A.key !== target.key) {
+      A = window.__mcxAutoclick = {
+        key: target.key, phase: 'searching', countdown: null, clicked: [],
+        idleSince: now, clickedAt: 0, stopped: false,
+      };
+    }
+    const report = () => ({ phase: A.phase, countdown: A.countdown, clicked: A.clicked.slice() });
+    if (A.stopped) return report();
+
+    // querySelectorAll across the document and every OPEN shadow root.
+    const deep = (sel) => {
+      const out = [];
+      const visit = (node) => {
+        try { out.push(...node.querySelectorAll(sel)); } catch (_) {}
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT);
+        for (let el = walker.nextNode(); el; el = walker.nextNode()) if (el.shadowRoot) visit(el.shadowRoot);
+      };
+      visit(document);
+      return out;
+    };
+    const visible = (el) => {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+    };
+    const enabled = (el) => !(el.disabled || el.hasAttribute('disabled')
+      || el.getAttribute('aria-disabled') === 'true'
+      || /(^|\s)(is-)?disabled(\s|$)/i.test(el.getAttribute('class') || '')
+      || getComputedStyle(el).pointerEvents === 'none');
+    const label = (el) => [el.innerText || el.textContent || '', el.getAttribute('aria-label') || '',
+      el.getAttribute('title') || '', el.value || ''].join(' ').replace(/\s+/g, ' ').trim();
+    const avoid = rx(R.avoidText);
+    const fileRx = new RegExp('(?:file_id=|/files/)' + target.fileId + '(?:[^0-9]|$)');
+    const matchesFile = (el) => fileRx.test(el.getAttribute('href') || '')
+      || fileRx.test(el.getAttribute('data-download-url') || '')
+      || (el.getAttribute('data-file-id') || '') === String(target.fileId);
+    const pageText = () => {
+      let t = document.body ? document.body.innerText || '' : '';
+      for (const host of deep('*')) if (host.shadowRoot) t += '\n' + (host.shadowRoot.textContent || '');
+      return t;
+    };
+    const press = (el, kind) => {
+      A.clicked.push(kind);
+      A.clickedAt = now;
+      A.phase = 'clicked';
+      try { el.scrollIntoView({ block: 'center' }); } catch (_) {}
+      el.click();
+    };
+    const stop = (phase) => { A.phase = phase; A.stopped = true; A.countdown = null; return report(); };
+
+    // 1. A bot check / CAPTCHA anywhere on the page: hands off, for good.
+    const ch = R.challenge;
+    if (deep(ch.selectors.join(',')).length || rx(ch.title).test(document.title || '')
+      || rx(ch.text).test(document.body ? document.body.innerText || '' : '')) {
+      return stop('challenge');
+    }
+
+    const text = pageText();
+    let secs = null;
+    for (const p of R.countdown) {
+      const m = rx(p).exec(text);
+      if (m) { secs = Number(m[1]); break; }
+    }
+    A.countdown = secs;
+
+    const clickables = deep(R.clickable).filter((el) => visible(el) && !avoid.test(label(el)));
+    const byRule = (rule) => {
+      const t = rx(rule.text);
+      const hits = new Set(deep(rule.selectors.join(',')).filter(visible));
+      for (const el of clickables) if (t.test(label(el))) hits.add(el);
+      return [...hits].filter((el) => !avoid.test(label(el)));
+    };
+
+    // 2. The site already shows an nxm:// link for our file.
+    if (!A.clicked.includes('nxm')) {
+      const link = deep(R.nxmLink).find((el) => visible(el) && matchesFile(el) && enabled(el));
+      if (link) { press(link, 'nxm'); return report(); }
+    }
+
+    // 3. "Slow download" on the file's download page.
+    const slow = byRule(R.slowDownload)[0] || null;
+    if (slow && !A.clicked.includes('slow')) {
+      if (enabled(slow)) { press(slow, 'slow'); return report(); }
+      A.phase = 'waiting';          // present, but the site has not enabled it yet
+      A.idleSince = now;
+      return report();
+    }
+
+    // 4. A "Mod Manager Download" for our file (a file row, or the follow-up
+    //    button some page versions show after "Slow download").
+    if (!A.clicked.includes('manager')) {
+      const all = byRule(R.managerDownload);
+      const mine = all.filter(matchesFile);
+      let pick = mine[0] || (all.length === 1 && !(all[0].getAttribute('href') || '').includes('file_id=') ? all[0] : null);
+      // After "Slow download" only a real nxm:// handoff may be pressed — a
+      // file-row button would just reload this page and start over.
+      if (pick && A.clicked.includes('slow') && !/^nxm:/i.test(pick.getAttribute('href') || '')) pick = null;
+      if (pick) {
+        if (enabled(pick)) { press(pick, 'manager'); return report(); }
+        A.phase = 'waiting';
+        A.idleSince = now;
+        return report();
+      }
+    }
+
+    // 5. Nothing to press yet.
+    if (A.clicked.length) {
+      // Pressed; the site's countdown / handoff is running. Only give up when
+      // the countdown is over and nothing arrived for giveUpMs.
+      if (secs !== null && secs > 0) A.idleSince = now;
+      if (now - Math.max(A.idleSince, A.clickedAt) > R.giveUpMs) return stop('fallback');
+      A.phase = 'clicked';
+      return report();
+    }
+    if (rx(R.login.text).test(text)) { A.phase = 'login'; A.idleSince = now; return report(); }
+    if (secs !== null && secs > 0) A.idleSince = now;            // the site says wait
+    if (document.readyState !== 'complete') A.idleSince = now;   // page still settling
+    if (now - A.idleSince > R.giveUpMs) return stop('fallback');
+    A.phase = 'searching';
+    return report();
+  }
+
+  // ------------------------------------------------------ renderer API
+  // Is `url` the exact file page this one-click run opened? Same origin, same
+  // /{game}/mods/{modId} path, same file_id. Anything else — another mod, the
+  // mod's description, the login pages — is left alone.
+  function isTargetPage(url, targetUrl) {
+    try {
+      const u = new URL(url);
+      const t = new URL(targetUrl);
+      if (u.origin !== t.origin) return false;
+      if (u.pathname.replace(/\/+$/, '') !== t.pathname.replace(/\/+$/, '')) return false;
+      return u.searchParams.get('file_id') === t.searchParams.get('file_id');
+    } catch (_) { return false; }
+  }
+
+  // The Nexus sign-in pages (where the user goes when the file page asks).
+  function isLoginPage(url) {
+    return /^https:\/\/users\.nexusmods\.com\//i.test(url || '') || /\/(login|sign_in|auth)\b/i.test((() => {
+      try { return new URL(url).pathname; } catch (_) { return ''; }
+    })());
+  }
+
+  // target = { modId, fileId }
+  function stepCode(target) {
+    const t = { modId: Number(target.modId), fileId: Number(target.fileId), key: `${target.modId}:${target.fileId}` };
+    return `(${agentStep.toString()})(${JSON.stringify(RULES)}, ${JSON.stringify(t)})`;
+  }
+
+  root.NexusAutoclick = { RULES, isTargetPage, isLoginPage, stepCode, agentStep };
+})(typeof window !== 'undefined' ? window : globalThis);

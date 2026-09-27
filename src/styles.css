@@ -1016,6 +1016,14 @@ body.reduced-motion * { transition: none !important; animation: none !important;
   background: rgba(5, 8, 15, 0.6);
 }
 .nexus-dl-hint b { color: var(--amber); }
+/* One-click status strip: what the auto-click is doing on the page below. */
+.nexus-dl-auto {
+  padding: 7px 18px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.3px;
+  color: var(--holo); background: rgba(79, 209, 255, 0.07);
+  border-bottom: 1px solid rgba(79, 209, 255, 0.14);
+}
+.nexus-dl-auto.warn { color: var(--amber); background: rgba(255, 200, 87, 0.08); border-bottom-color: var(--amber-dim); }
+.nexus-dl-auto.good { color: var(--good); background: rgba(109, 255, 176, 0.07); }
 .nexus-dl-view {
   flex: 1 1 auto; width: 100%; min-height: 0;
   border: 0; background: #10141c;
