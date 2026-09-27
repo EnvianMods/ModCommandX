@@ -654,13 +654,26 @@ async function checkForUpdates({ background = false } = {}) {
   return results;
 }
 
+// Themes (Settings -> Theme): id -> the window background shown before the
+// page paints, which matches each theme's --bg. The page itself learns the
+// theme from the preload's synchronous 'theme-sync' read (src/theme-boot.js
+// sets <html data-theme> before the stylesheet renders), so neither theme
+// ever flashes the other.
+const THEMES = { modcommandx: '#15171a', modcommand: '#05080f' };
+const DEFAULT_THEME = 'modcommandx';
+function currentTheme() {
+  const t = store.settings.theme;
+  return Object.prototype.hasOwnProperty.call(THEMES, t) ? t : DEFAULT_THEME;
+}
+ipcMain.on('theme-sync', (e) => { e.returnValue = currentTheme(); });
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 640,
-    backgroundColor: '#05080f',
+    backgroundColor: THEMES[currentTheme()],
     autoHideMenuBar: true,
     title: 'Mod Command X',
     icon: path.join(__dirname, 'src', 'assets', 'app-icon.png'),
@@ -1383,8 +1396,10 @@ const handlers = {
     delete patch.nexusApiKey;
     delete patch.nexusApiKeyEncrypted;
     delete patch.hasNexusKey;
+    if ('theme' in patch && !Object.prototype.hasOwnProperty.call(THEMES, patch.theme)) delete patch.theme;
     Object.assign(store.settings, patch);
     store.save();
+    if (patch.theme && win && !win.isDestroyed()) win.setBackgroundColor(THEMES[patch.theme]);
     return fullState();
   },
 

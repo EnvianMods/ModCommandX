@@ -1,4 +1,6 @@
-/* Mod Command X — Star Wars holo-terminal theme */
+/* Mod Command X — two themes on one layout: "Mod Command" (the Star Wars
+   holo-terminal look, the :root tokens) and "Mod Command X" (the default
+   bounty-hunter look, [data-theme="modcommandx"] at the end of this file). */
 
 :root {
   /* ---- "Mod Command" theme: the original holo-terminal look. ----
@@ -1162,3 +1164,191 @@ body.reduced-motion * { transition: none !important; animation: none !important;
 .pitch-row > span:first-child { color: var(--holo); }
 .pitch-row.pitch-head > span:first-child { color: var(--holo-dim); }
 .pitch-row em { color: var(--amber); font-style: normal; }
+
+/* ---------- Settings -> Theme ---------- */
+.theme-select { flex: 0 0 220px; }
+
+/* =======================================================================
+   THEME: "Mod Command X" (the default) — a black-market bounty board.
+   Boba Fett's kit: weathered Mandalorian armor green, dented ochre gold,
+   oxidised rust-red markings, khaki flight suit, scorched gunmetal, and
+   the black T-visor. Same layout as "Mod Command"; the tokens below
+   replace its palette, and the few rules after them add the texture,
+   stencil type and visor/hazard accents. Everything here is CSS-only and
+   static (no animated or filtered layers over the scrolling lists).
+   Contrast (WCAG) of every text colour is noted in CHANGELOG / README.
+   ======================================================================= */
+:root[data-theme="modcommandx"] {
+  --bg: #15171a;                          /* scorched gunmetal */
+  --bg-rgb: 21, 23, 26;
+  --bg-raise: #1d2022;
+  --panel: rgba(33, 37, 32, 0.9);         /* olive-tinged charcoal plate */
+  --panel-rgb: 33, 37, 32;
+  --panel-edge: rgba(135, 151, 102, 0.3);
+  --holo: #a9bb86;                        /* armor green, lit — primary accent */
+  --holo-rgb: 169, 187, 134;
+  --holo-dim: #879766;                    /* armor green, weathered */
+  --holo-glow: rgba(0, 0, 0, 0.6);        /* no neon: glows become soot */
+  --holo-glow-rgb: 0, 0, 0;
+  --amber: #c3953a;                       /* dented ochre gold — highlights */
+  --amber-rgb: 195, 149, 58;
+  --amber-glow-rgb: 110, 78, 22;
+  --amber-dim: rgba(195, 149, 58, 0.88);
+  --danger: #e5704f;                      /* rust red, lit for text */
+  --danger-rgb: 229, 112, 79;
+  --danger-glow-rgb: 142, 43, 32;
+  --rust: #8e2b20;                        /* oxidised helmet marking — fills */
+  --rust-rgb: 142, 43, 32;
+  --good: #8fc160;                        /* armor green, fresh paint — success */
+  --good-rgb: 143, 193, 96;
+  --good-glow-rgb: 0, 0, 0;
+  --text: #ebe3cf;                        /* bleached bone */
+  --text-dim: #b9ad8f;                    /* khaki flight suit */
+  --dim-rgb: 185, 173, 143;
+  --steel: #a8a996;
+  --steel-rgb: 168, 169, 150;
+  --steel-glow-rgb: 0, 0, 0;
+  --violet: #b89aa8;
+  --violet-rgb: 184, 154, 168;
+  --teal: #86b5a0;
+  --teal-rgb: 134, 181, 160;
+  --coral: #d98e5c;
+  --coral-rgb: 217, 142, 92;
+  --on-amber: #17130a;
+  --on-holo: #141810;
+  --on-good: #101a08;
+  --visor: #0b0c0d;
+  --sidebar-bg: linear-gradient(180deg, rgba(30, 33, 30, 0.97), rgba(19, 21, 23, 0.97));
+  --child-bg: rgba(26, 29, 27, 0.72);
+  --shell-bg: linear-gradient(180deg, rgba(32, 36, 31, 0.98), rgba(21, 23, 26, 0.98));
+  --backdrop-deep: rgba(8, 9, 10, 0.8);
+  --webview-bg: #111316;
+  /* grime: fine khaki speckle (an SVG noise tile, rasterised once), two sets
+     of faint scratches, an armor-green haze top-left, a rust haze bottom-right
+     and a vignette. Static — the layer is fixed and never animates. */
+  --ambience:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .78 0 0 0 0 .73 0 0 0 0 .6 .16 0 0 0 -.04'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(113deg, transparent 0 57px, rgba(185, 173, 143, 0.028) 57px 58px, transparent 58px 131px),
+    repeating-linear-gradient(-67deg, transparent 0 89px, rgba(0, 0, 0, 0.18) 89px 90px, transparent 90px 203px),
+    radial-gradient(ellipse at 12% -8%, rgba(93, 107, 69, 0.26), transparent 55%),
+    radial-gradient(ellipse at 104% 112%, rgba(142, 43, 32, 0.16), transparent 50%),
+    radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.42));
+  --scanlines: repeating-linear-gradient(0deg, transparent 0 2px, rgba(0, 0, 0, 0.06) 2px 3px);
+  /* condensed, stencil-ish headings: Bahnschrift ships with Windows 10+;
+     Agency FB with Office; the rest are common Linux condensed faces. */
+  --display: "Bahnschrift", "Agency FB", "Roboto Condensed", "Ubuntu Condensed",
+    "DejaVu Sans Condensed", "Liberation Sans Narrow", "Arial Narrow", "Segoe UI", sans-serif;
+  --display-stretch: semi-condensed;
+  --r-pill: 1px;
+  --r-switch: 2px;
+  --r-knob: 1px;
+  --r-scroll: 0;
+}
+
+/* native bits (select pop-ups, stray scrollbars) follow the dark plate */
+:root[data-theme="modcommandx"] { color-scheme: dark; }
+
+/* grime does not drift like a starfield */
+[data-theme="modcommandx"] #starfield { animation: none; }
+
+/* every scroll area (modals, config list, samples), not only the content
+   pane, gets the square olive thumb */
+[data-theme="modcommandx"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="modcommandx"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="modcommandx"] ::-webkit-scrollbar-thumb { background: rgba(var(--holo-rgb), 0.22); border-radius: var(--r-scroll); }
+[data-theme="modcommandx"] ::-webkit-scrollbar-thumb:hover { background: rgba(var(--holo-rgb), 0.35); }
+[data-theme="modcommandx"] ::-webkit-scrollbar-corner { background: transparent; }
+
+/* the smaller stencil labels share the heading face */
+[data-theme="modcommandx"] :is(.setup-step-head, .fomod-stepname, .fomod-group-title, .link-section-title,
+  .profile-label, .config-group, .optional-section-head, .certainty-badge, .featured-tag) {
+  font-family: var(--display); font-stretch: var(--display-stretch);
+}
+
+/* focus ring: a hard ochre outline, not the browser's default */
+[data-theme="modcommandx"] :focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+[data-theme="modcommandx"] .text-input:focus-visible,
+[data-theme="modcommandx"] .profile-select:focus-visible { outline: none; }
+
+/* the T-visor: the rule under every view title is a visor slot with its
+   stem — a short bar, the stem, then a worn rule running out */
+[data-theme="modcommandx"] .view-header h1::after {
+  height: 12px;
+  background:
+    linear-gradient(var(--amber), var(--amber)) 0 0 / 70px 4px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) 31px 0 / 8px 12px no-repeat,
+    linear-gradient(90deg, rgba(var(--amber-rgb), 0.45), transparent) 70px 1px / calc(100% - 70px) 2px no-repeat;
+}
+
+/* active nav item: an ochre stencil bar instead of a holo line */
+[data-theme="modcommandx"] .nav-item.active {
+  border-left-color: var(--amber);
+  background: linear-gradient(90deg, rgba(var(--holo-rgb), 0.14), transparent 85%);
+}
+
+/* active source tab: the underline grows a visor stem */
+[data-theme="modcommandx"] .source-tab { position: relative; }
+[data-theme="modcommandx"] .source-tab.active::after {
+  content: ""; position: absolute; left: 50%; bottom: -8px;
+  width: 8px; height: 6px; transform: translateX(-50%);
+  background: currentColor;
+}
+
+/* card titles carry a rust tag, like the marking over Fett's visor */
+[data-theme="modcommandx"] .card-title::before {
+  content: ""; display: inline-block; vertical-align: 0;
+  width: 10px; height: 7px; margin-right: 9px;
+  background: var(--rust); box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* buttons: primary is solid dented gold with dark ink; danger is rust */
+[data-theme="modcommandx"] .btn.primary {
+  background: linear-gradient(180deg, #d0a347, #a57a2a);
+  border-color: #d8b05a; color: var(--on-amber);
+}
+[data-theme="modcommandx"] .btn.primary:hover {
+  background: linear-gradient(180deg, #dbb055, #b3872f);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.55);
+}
+[data-theme="modcommandx"] .btn.danger {
+  background: rgba(var(--rust-rgb), 0.45); border-color: rgba(var(--danger-rgb), 0.55); color: #f3e6d6;
+}
+[data-theme="modcommandx"] .btn.danger:hover { background: rgba(var(--rust-rgb), 0.7); }
+
+/* launch: the big gold puck button, with a hazard band above it */
+[data-theme="modcommandx"] .sidebar-footer {
+  border-top: none;
+  background: repeating-linear-gradient(-45deg, rgba(var(--amber-rgb), 0.55) 0 7px, transparent 7px 14px) top / 100% 5px no-repeat;
+}
+[data-theme="modcommandx"] .launch-btn:not(.launch-btn-alt) {
+  background: linear-gradient(180deg, #d0a347, #a57a2a);
+  border-color: #d8b05a;
+}
+[data-theme="modcommandx"] .launch-btn:not(.launch-btn-alt):hover {
+  background: linear-gradient(180deg, #dbb055, #b3872f); box-shadow: 0 0 18px rgba(0, 0, 0, 0.6);
+}
+[data-theme="modcommandx"] .launch-btn:not(.launch-btn-alt) .launch-label,
+[data-theme="modcommandx"] .launch-btn:not(.launch-btn-alt) .launch-sub { color: var(--on-amber); text-shadow: none; }
+[data-theme="modcommandx"] .launch-label { font-family: var(--display); font-stretch: var(--display-stretch); }
+[data-theme="modcommandx"] .launch-btn-alt .launch-sub { color: rgba(var(--steel-rgb), 0.85); }
+
+/* progress: a hazard-striped fill */
+[data-theme="modcommandx"] .progress-fill,
+[data-theme="modcommandx"] .nexus-dl-progress-bar {
+  background: repeating-linear-gradient(-45deg, #c3953a 0 8px, #a57a2a 8px 16px);
+}
+
+/* dossiers (modals, the Nexus panel) get a gold top edge */
+[data-theme="modcommandx"] .zc-modal-box,
+[data-theme="modcommandx"] .nexus-dl-shell { border-top: 2px solid var(--amber); }
+
+/* the drag-and-drop target is a hazard-framed drop zone */
+[data-theme="modcommandx"] .drop-box {
+  border: 3px solid transparent;
+  background:
+    linear-gradient(var(--bg-raise), var(--bg-raise)) padding-box,
+    repeating-linear-gradient(-45deg, var(--amber) 0 10px, var(--visor) 10px 20px) border-box;
+}
+
+/* toasts: errors are the rust marking, full height */
+[data-theme="modcommandx"] .toast.error { border-left-color: var(--rust); box-shadow: inset 3px 0 0 var(--danger), 0 4px 24px rgba(0, 0, 0, 0.5); }
