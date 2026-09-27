@@ -97,13 +97,13 @@ configureBrowserIdentity(app);
 // Running from source keeps using ./data so a dev checkout stays self-contained.
 //
 // Mod Command X installs side by side with the upstream Zero Company Mod
-// Command and shares NOTHING with it: its own data folder here, its own
+// Command: its own data folder here (settings, credentials, staging), its own
 // Electron userData (%APPDATA%\Mod Command X, from package.json productName —
-// so its own single-instance lock and its own persist:nexus cookies) and its
-// own game-side archive. It deliberately does NOT migrate the upstream app's
-// %APPDATA%\ZeroCompanyModCommand or its older ZeroCompanyModCommand-data
-// folder; a user who wants those mods imports them explicitly (Settings ->
-// Import from a mod manager folder), which copies and never moves.
+// so its own single-instance lock and its own persist:nexus cookies). It does
+// NOT migrate the upstream app's %APPDATA%\ZeroCompanyModCommand or its older
+// ZeroCompanyModCommand-data folder. The one thing both apps share is the
+// game-side mod ARCHIVE, <game>\ModCommandArchive — one stored copy of each
+// mod, see "mod archive location" below.
 const APPDATA_DIR_NAME = 'ModCommandX';
 
 function resolveDataDir() {
@@ -118,15 +118,280 @@ let win = null;
 
 // ---------------------------------------------------------- mod archive location
 // The archive (library/backups/versions + a mirrored manifest) lives in the
-// GAME folder by default — <game>\ModCommandXArchive — so mods survive app
+// GAME folder by default — <game>\ModCommandArchive — so mods survive app
 // updates and deletions, and a fresh install can restore everything from it.
 // settings.storageDir overrides with a custom location.
+//
+// SHARED WITH THE MAIN MOD COMMAND. <game>\ModCommandArchive is the upstream
+// Zero Company Mod Command's archive too: both apps reference the SAME stored
+// copy of each mod (library/<id>), so nothing is kept twice. Rules X follows
+// (the main app 1.9.14 knows nothing of X and follows none of them):
+//   - startup: mods the main app installed are adopted in place — X adds the
+//     records, pointing at the same library/<id>; no file is copied
+//     (reconcileSharedArchive). Only mod records: never its settings,
+//     credentials or theme.
+//   - the mirror (manager-data.json in the archive) is merged, never
+//     clobbered: the main app's records, settings block and profiles stay.
+//   - removing a mod here leaves its stored copy when the main app still
+//     lists it (a toast says so). The main app removing a mod DOES delete the
+//     copy X uses; X then shows the mod as missing (re-download or remove).
+//   - X's own pre-1.0 archive, <game>\ModCommandXArchive, is folded in once.
+//   - don't run both apps at once: X shows a banner while the main app is open.
 
 const storageLib = require('./lib/storage');
-const { ARCHIVE_DIR_NAME } = storageLib;
+const { ARCHIVE_DIR_NAME, OLD_X_ARCHIVE_DIR_NAME, MIRROR_FILE, X_BLOCK } = storageLib;
 
 function resolveStorageRoot() {
   return storageLib.resolveStorageRoot(store.settings, store.dataDir);
+}
+
+// The archive is in use (not the app-data fallback before a game is set).
+function archiveActive() {
+  return path.resolve(store.storageRoot) !== path.resolve(store.dataDir);
+}
+
+// The main Mod Command's own data folder — %APPDATA%\ZeroCompanyModCommand
+// (packaged and portable builds alike; a dev run keeps ./data, which the
+// archive mirror stands in for). Only ever READ. Test runs (ZC_DATA_DIR) never
+// look at the real one unless MCX_UPSTREAM_DATA_DIR names a folder.
+function upstreamDataDir() {
+  if (process.env.MCX_UPSTREAM_DATA_DIR) return process.env.MCX_UPSTREAM_DATA_DIR;
+  if (process.env.ZC_DATA_DIR) return null;
+  try { return path.join(app.getPath('appData'), 'ZeroCompanyModCommand'); } catch (_) { return null; }
+}
+
+// What the main app references in the current archive (short cache: a batch
+// of uninstalls or an orphan scan reads the manifest once).
+let sharedRefsCache = null;
+function sharedRefs(fresh) {
+  if (!archiveActive()) return { ids: new Set(), records: new Map(), source: 'none' };
+  const now = Date.now();
+  if (!fresh && sharedRefsCache && sharedRefsCache.root === store.storageRoot && now - sharedRefsCache.at < 3000) {
+    return sharedRefsCache.refs;
+  }
+  const refs = storageLib.upstreamRefs(store.storageRoot, upstreamDataDir());
+  sharedRefsCache = { at: now, root: store.storageRoot, refs };
+  return refs;
+}
+
+// Stored copies a removal here left in place because the main app uses them:
+// never re-adopted at the next startup (the user removed them from X).
+function dismissShared(id) {
+  const list = Array.isArray(store.settings.sharedArchiveDismissed) ? store.settings.sharedArchiveDismissed : [];
+  if (!list.includes(id)) list.push(id);
+  store.settings.sharedArchiveDismissed = list;
+}
+
+let keptSharedNames = [];
+engine.shared = {
+  isReferenced: (id) => sharedRefs().ids.has(String(id)),
+  kept: (id, mod) => {
+    dismissShared(String(id));
+    keptSharedNames.push((mod && mod.name) || id);
+    log('info', `kept the stored copy of "${(mod && mod.name) || id}" (library/${id}) — Mod Command still uses it`);
+  },
+};
+
+// Notices from archive setup, shown once the window is up.
+const archiveNotices = [];
+let windowLoaded = false;
+function archiveNotice(message, kind) {
+  if (windowLoaded) sendEvent({ type: 'toast', kind: kind || 'info', message });
+  else archiveNotices.push({ message, kind });
+}
+
+// Leaving an archive for another folder (a custom location picked, or the
+// game folder changed): X copies ITS OWN stored mods over. A copy the main
+// Mod Command still uses is copied and left in place; one only X used is
+// moved. Nothing else in the old archive is X's to move.
+function leaveArchive(fromRoot, toRoot) {
+  let moved = 0;
+  const refs = storageLib.upstreamRefs(fromRoot, upstreamDataDir());
+  const copyEntry = (s, d, keep) => {
+    if (!fs.existsSync(s)) return;
+    if (fs.existsSync(d)) {
+      // Already there (the same bytes): the source copy is surplus unless kept.
+      if (!keep && storageLib.sameTree(s, d)) fs.rmSync(s, { recursive: true, force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(d), { recursive: true });
+    fs.cpSync(s, d, { recursive: true });
+    if (storageLib.countFilesRec(s) !== storageLib.countFilesRec(d)) return;
+    if (!keep) fs.rmSync(s, { recursive: true, force: true });
+    moved += 1;
+  };
+  for (const m of store.mods) {
+    const shared = refs.ids.has(String(m.id));
+    copyEntry(path.join(fromRoot, 'library', m.id), path.join(toRoot, 'library', m.id), shared);
+    copyEntry(path.join(fromRoot, 'backups', 'gamefiles', m.id), path.join(toRoot, 'backups', 'gamefiles', m.id), shared);
+    const key = engine._vaultKey(m);
+    const vsrc = path.join(fromRoot, 'versions', key);
+    try {
+      for (const entry of fs.readdirSync(vsrc)) copyEntry(path.join(vsrc, entry), path.join(toRoot, 'versions', key, entry), true);
+    } catch (_) {}
+  }
+  return { moved };
+}
+
+// X's own archive from before it shared the main app's: fold its entries into
+// the shared one (copy-verify-delete, never clobbering; an id that collides
+// with different content moves in under a new id and X's records follow),
+// then remove the old folder once nothing but its mirror is left. Safe to
+// interrupt — the next start picks up what is left.
+function foldOldXArchive(desired) {
+  if (!store.settings.gamePath) return null;
+  const old = path.join(store.settings.gamePath, OLD_X_ARCHIVE_DIR_NAME);
+  if (!fs.existsSync(old) || storageLib.samePath(old, desired)) return null;
+  const oldMirrorFile = path.join(old, MIRROR_FILE);
+  const oldMirror = storageLib.readJson(oldMirrorFile);
+  let restored = 0;
+  // X's own data folder was reset but its old archive remembers the mods:
+  // those records are X's own, bring them back before the files move.
+  if (!store.mods.length && oldMirror && Array.isArray(oldMirror.mods)) {
+    for (const rec of oldMirror.mods) {
+      if (!rec || !rec.id || !Array.isArray(rec.files) || !fs.existsSync(path.join(old, 'library', rec.id))) continue;
+      store.data.mods.push({ ...rec, updateInfo: null });
+      restored += 1;
+    }
+    if (!store.profiles.length && Array.isArray(oldMirror.profiles)) store.data.profiles.push(...oldMirror.profiles);
+  }
+  const res = storageLib.mergeArchiveInto(old, desired);
+  for (const [oldId, newId] of res.renamed) {
+    const m = store.getMod(oldId);
+    if (!m) continue;
+    m.id = newId;
+    engine._remapId(oldId, newId);
+  }
+  const leftover = storageLib.countFilesRec(old) - (fs.existsSync(oldMirrorFile) ? 1 : 0);
+  let removed = false;
+  if (leftover === 0 && !res.errors.length) {
+    try { fs.rmSync(old, { recursive: true, force: true }); removed = true; } catch (_) {}
+  }
+  log(res.errors.length ? 'warn' : 'info', `folded ${OLD_X_ARCHIVE_DIR_NAME} into ${ARCHIVE_DIR_NAME}: `
+    + `${res.moved} entr(y/ies) moved, ${res.deduped} already there, ${res.renamed.size} re-numbered, ${restored} record(s) restored`
+    + `${removed ? ', old folder removed' : `, old folder kept (${leftover} file(s) left)`}`
+    + `${res.errors.length ? ` — ${res.errors.join('; ')}` : ''}`);
+  if (res.moved || res.deduped || removed) {
+    archiveNotice(`Mod Command X now shares Mod Command's mod archive (${ARCHIVE_DIR_NAME}). `
+      + `Moved ${res.moved} stored item(s) over from ${OLD_X_ARCHIVE_DIR_NAME}${res.deduped ? ` (${res.deduped} were already there)` : ''}`
+      + `${res.renamed.size ? `, ${res.renamed.size} kept under a new id` : ''}`
+      + `${removed ? ' and removed the old folder.' : `; ${OLD_X_ARCHIVE_DIR_NAME} still holds ${leftover} file(s) — see the log.`}`,
+    res.errors.length ? 'warn' : 'info');
+  }
+  return { moved: res.moved, deduped: res.deduped, renamed: res.renamed.size, restored, errors: res.errors, removed };
+}
+
+// Startup (and whenever the archive moves): bring X's mod list in line with
+// the shared archive.
+//   - adopt: a stored mod the main app (or an earlier X data folder) lists in
+//     the mirror/its manifest that X doesn't know becomes an X record pointing
+//     at the SAME library/<id> — no copy. Its enabled state is what is really
+//     in the game: on only when its deployed files are there.
+//   - re-link: an X record whose stored copy vanished, when the main app now
+//     holds the same mod under another id (it re-installed it), follows that id.
+//   - sync: a shared mod the main app switched off (files gone from the game)
+//     is shown off here too, and one it switched on is shown on.
+//   - skip: ids removed here earlier (dismissed) and runtime entries.
+function reconcileSharedArchive() {
+  const summary = { adopted: [], relinked: [], synced: [], missing: [] };
+  if (!archiveActive()) return summary;
+  const refs = sharedRefs(true);
+  store.sharedUpstreamIds = [...refs.ids];
+  const mirror = storageLib.readJson(path.join(store.storageRoot, MIRROR_FILE));
+  const wasEmpty = !store.mods.length;
+  const cand = new Map(refs.records);
+  for (const m of (mirror && Array.isArray(mirror.mods)) ? mirror.mods : []) {
+    if (m && m.id && !cand.has(String(m.id))) cand.set(String(m.id), m);
+  }
+  const dismissed = new Set((Array.isArray(store.settings.sharedArchiveDismissed) ? store.settings.sharedArchiveDismissed : [])
+    .filter((id) => refs.ids.has(id)));
+  const known = new Set(store.mods.map((m) => m.id));
+  const gameHas = (rel) => { try { return fs.existsSync(engine.gameAbs(rel)); } catch (_) { return false; } };
+  const reflect = (rec) => {
+    const deployed = Array.isArray(rec.deployed) ? rec.deployed : [];
+    if (rec.enabled && store.settings.gamePath && deployed.some(gameHas)) {
+      return { enabled: true, deployed, deployedHashes: rec.deployedHashes || {} };
+    }
+    return { enabled: false, deployed: [], deployedHashes: {} };
+  };
+  const missingByKey = new Map();
+  for (const m of store.mods) if (engine.storedCopyMissing(m)) missingByKey.set(engine._vaultKey(m), m);
+
+  const toAdopt = [...cand.values()].filter((r) => {
+    const id = String(r.id);
+    return !known.has(id) && !dismissed.has(id) && r.modType && r.modType !== 'ue4ss-runtime' && !r.runtime
+      && Array.isArray(r.files) && fs.existsSync(store.modLibraryDir(id));
+  }).sort((a, b) => ((a.loadPriority != null ? a.loadPriority : 9e9) - (b.loadPriority != null ? b.loadPriority : 9e9)));
+  const adoptIds = new Set(toAdopt.map((r) => String(r.id)));
+  for (const rec of toAdopt) {
+    const id = String(rec.id);
+    const clean = {
+      metaTitle: null, parentId: null, grouping: null, warnings: [], backups: [], origin: { type: 'local' },
+      ...rec,
+      id,
+      ...reflect(rec),
+      updateInfo: null,
+    };
+    if (clean.parentId && !known.has(clean.parentId) && !adoptIds.has(clean.parentId)) { clean.parentId = null; clean.grouping = null; }
+    if (!Array.isArray(clean.packages)) {
+      try { clean.packages = engine._listPackages(store.modLibraryDir(id), clean.files); } catch (_) { clean.packages = []; }
+    }
+    const stale = missingByKey.get(engine._vaultKey(clean));
+    if (stale) {
+      const idx = store.data.mods.indexOf(stale);
+      store.data.mods[idx] = { ...clean, name: stale.name };
+      engine._remapId(stale.id, id);
+      missingByKey.delete(engine._vaultKey(clean));
+      summary.relinked.push(stale.name);
+    } else {
+      store.data.mods.push(clean);
+      summary.adopted.push(clean.name);
+    }
+    known.add(id);
+  }
+
+  for (const m of store.mods) {
+    if (adoptIds.has(m.id) || engine.storedCopyMissing(m)) continue;
+    const up = refs.records.get(m.id);
+    if (!up || !store.settings.gamePath) continue;
+    const mine = Array.isArray(m.deployed) ? m.deployed : [];
+    const theirs = Array.isArray(up.deployed) ? up.deployed : [];
+    if (m.enabled && !up.enabled && mine.length && !mine.some(gameHas)) {
+      m.enabled = false; m.deployed = []; m.deployedHashes = {};
+      summary.synced.push(m.name);
+    } else if (!m.enabled && up.enabled && theirs.some(gameHas)) {
+      m.enabled = true; m.deployed = theirs; m.deployedHashes = up.deployedHashes || {};
+      summary.synced.push(m.name);
+    }
+  }
+
+  // A fresh X data folder: X's own squad profiles come back from the mirror.
+  if (wasEmpty && mirror && mirror[X_BLOCK] && Array.isArray(mirror.profiles)) {
+    const own = new Set(Array.isArray(mirror[X_BLOCK].profileIds) ? mirror[X_BLOCK].profileIds : []);
+    for (const p of mirror.profiles) {
+      if (!p || !own.has(p.id)) continue;
+      if (store.profiles.some((x) => (x.name || '').toLowerCase() === (p.name || '').toLowerCase())) continue;
+      store.data.profiles.push(p);
+    }
+  }
+
+  summary.missing = store.mods.filter((m) => engine.storedCopyMissing(m)).map((m) => m.name);
+  store.settings.sharedArchiveDismissed = [...dismissed];
+  store.save();
+  if (summary.adopted.length || summary.relinked.length || summary.synced.length || summary.missing.length) {
+    log('info', `shared archive: adopted ${summary.adopted.length} (${summary.adopted.join(', ')}), `
+      + `re-linked ${summary.relinked.length}, synced ${summary.synced.length}, missing ${summary.missing.length}`
+      + ` (main app refs: ${refs.ids.size} via ${refs.source})`);
+  }
+  if (summary.adopted.length) {
+    archiveNotice(`Added ${summary.adopted.length} mod(s) from the shared mod archive (installed with Mod Command) — `
+      + 'the same stored copies, nothing duplicated.');
+  }
+  if (summary.missing.length) {
+    archiveNotice(`${summary.missing.length} mod(s) have no stored copy any more (${summary.missing.slice(0, 3).join(', ')}`
+      + `${summary.missing.length > 3 ? '…' : ''}) — removed in Mod Command? Download again or uninstall them here.`, 'warn');
+  }
+  return summary;
 }
 
 // Re-point (and migrate) the archive whenever the resolved location changes —
@@ -134,36 +399,58 @@ function resolveStorageRoot() {
 function ensureStorage() {
   const desired = resolveStorageRoot();
   if (path.resolve(desired) === path.resolve(store.storageRoot)) return null;
-  // Only X's OWN archive is ever touched here. The upstream Mod Command's
-  // <game>\ModCommandArchive (and its pre-1.9.0 ZeroCompanyModArchive) belong
-  // to that app: X never renames, merges, prunes or deletes them.
+  // The main Mod Command's pre-1.9.0 ZeroCompanyModArchive is its own to
+  // migrate: X never renames, merges, prunes or deletes it.
   fs.mkdirSync(desired, { recursive: true });
-  const res = storageLib.migrateStorage(store.storageRoot, desired);
+  // From X's private app-data folder everything is X's: move it all. From an
+  // archive (possibly the shared one) only X's own stored mods go.
+  const res = archiveActive()
+    ? leaveArchive(store.storageRoot, desired)
+    : storageLib.migrateStorage(store.storageRoot, desired);
+  try { foldOldXArchive(desired); } catch (err) { log('error', `could not fold ${OLD_X_ARCHIVE_DIR_NAME}: ${err.message}`); }
   store.setStorageRoot(desired);
-  store.save(); // also writes the mirrored manifest into the new root
-  log('info', `mod archive moved to ${desired} (${res.moved} entr(y/ies) migrated)`);
+  sharedRefsCache = null;
+  try { reconcileSharedArchive(); } catch (err) { log('error', `shared archive reconcile failed: ${err.message}`); }
+  store.save(); // also merges the mirrored manifest into the new root
+  log('info', `mod archive at ${desired} (${res.moved} entr(y/ies) migrated)`);
   return { root: desired, moved: res.moved };
 }
 
-// Fresh install + X's OWN archive already sitting in the game folder (or the
-// custom location): restore every mod, profile, and vault entry from it.
-// store.storageRoot is <game>\ModCommandXArchive (or storageDir), never the
-// upstream app's ModCommandArchive — X must not auto-import (and, with
-// pruneImported, empty) another app's archive.
-async function autoRestoreFromArchive() {
-  if (store.mods.length) return null;
-  const manifest = path.join(store.storageRoot, 'manager-data.json');
-  if (path.resolve(store.storageRoot) === path.resolve(store.dataDir) || !fs.existsSync(manifest)) return null;
-  try {
-    const results = await engine.restoreFromData(store.storageRoot, { pruneImported: true });
-    if (results.imported.length || results.profiles || results.vault) {
-      log('info', `auto-restored from archive: ${results.imported.length} mod(s), ${results.profiles} profile(s), ${results.vault} vault entr(y/ies)`);
-      return results;
-    }
-  } catch (err) {
-    log('error', `archive auto-restore failed: ${err.message}`);
-  }
-  return null;
+// ------------------------------------------------ the main Mod Command running
+// Both apps change the same archive and the same game folders, and the main
+// app follows none of X's sharing rules, so they should not run at the same
+// time. X can't stop it — it warns (a banner) while it is open. Signals:
+//   - Chromium's single-instance "lockfile" in the main app's userData
+//     (%APPDATA%\Zero Company Mod Command) — it exists only while that app
+//     runs (packaged, portable or dev run alike);
+//   - its process names (portable launcher + unpacked app).
+// An advisory lock of X's own in the archive would be pointless: the main
+// app would never look at it, and X is single-instance already.
+function upstreamUserDataDir() {
+  if (process.env.MCX_UPSTREAM_USER_DATA_DIR) return process.env.MCX_UPSTREAM_USER_DATA_DIR;
+  if (process.env.ZC_DATA_DIR) return null;
+  try { return path.join(app.getPath('appData'), 'Zero Company Mod Command'); } catch (_) { return null; }
+}
+const UPSTREAM_PROCESS_NAMES = ['zerocompanymodcommand.exe', 'zero company mod command.exe'];
+let upstreamRunning = false;
+function detectUpstreamRunning() {
+  return new Promise((resolve) => {
+    const ud = upstreamUserDataDir();
+    if (ud && fs.existsSync(path.join(ud, 'lockfile'))) return resolve(true);
+    if (process.platform !== 'win32' || process.env.MCX_UPSTREAM_NO_TASKLIST) return resolve(false);
+    require('child_process').execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 8000 }, (err, stdout) => {
+      if (err) return resolve(false);
+      const names = String(stdout).split(/\r?\n/).map((l) => (l.split('","')[0] || '').replace(/^"/, '').toLowerCase());
+      resolve(names.some((n) => UPSTREAM_PROCESS_NAMES.includes(n)));
+    });
+  });
+}
+async function refreshUpstreamRunning() {
+  const now = await detectUpstreamRunning().catch(() => false);
+  if (now === upstreamRunning) return;
+  upstreamRunning = now;
+  log(now ? 'warn' : 'info', now ? 'Mod Command is running — both apps share one mod archive' : 'Mod Command closed');
+  sendEvent({ type: 'shared-archive', upstreamRunning: now });
 }
 
 // ---------------------------------------------------------- Nexus API key at rest
@@ -314,6 +601,9 @@ function scrubSecretsFromDisk() {
       const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
       const st = raw && raw.settings;
       if (!st || !SECRET_SETTING_KEYS.some((k) => k in st)) continue;
+      // The shared archive's mirror: a settings block the main Mod Command
+      // wrote is ITS own (X never writes settings over it) — leave it as is.
+      if (!(raw[X_BLOCK] && raw[X_BLOCK].ownsSettings)) continue;
       for (const k of SECRET_SETTING_KEYS) delete st[k];
       fs.writeFileSync(file, JSON.stringify(raw, null, 2));
       log('info', 'removed stored credentials from the archive manifest mirror');
@@ -933,6 +1223,9 @@ app.whenReady().then(() => {
   // app-side content there, then restore from it when this store is fresh.
   try { ensureStorage(); } catch (err) { log('error', `archive setup failed: ${err.message}`); }
   try { scrubSecretsFromDisk(); } catch (_) {} // the archive mirror is known only now
+  // Warn while the main Mod Command is open (it shares the archive).
+  refreshUpstreamRunning().catch(() => {});
+  setInterval(() => { refreshUpstreamRunning().catch(() => {}); }, 10 * 1000);
   try { eaAppDetected = ea.eaAppPresent(); } catch (_) {}
   // EA-compat community list: fetch now and refresh every 30 minutes; a state
   // push follows so freshly flagged mods surface without a restart.
@@ -945,9 +1238,15 @@ app.whenReady().then(() => {
     if (det.found) {
       store.settings.gamePath = det.gamePath;
       store.save();
+      // The archive follows the game folder (and adopts the shared one's mods).
+      try { ensureStorage(); } catch (err) { log('error', `archive setup failed: ${err.message}`); }
     }
   }
   createWindow();
+  win.webContents.once('did-finish-load', () => {
+    windowLoaded = true;
+    for (const n of archiveNotices.splice(0)) sendEvent({ type: 'toast', kind: n.kind || 'info', message: n.message });
+  });
   // Handle an nxm:// link this instance was launched with.
   const url = nxmFromArgv(process.argv);
   if (url) win.webContents.once('did-finish-load', () => handleNxm(url));
@@ -996,16 +1295,11 @@ app.whenReady().then(() => {
         : `A newer UE4SS build is out (${u.latestBuild}, ${new Date(u.latestDate).toLocaleDateString()}) — you have ${u.currentBuild}. Update from Settings → UE4SS.` });
     }
   });
-  // Fresh store + existing archive → restore mods/profiles/vault from it.
+  // (A fresh store's mods come back from the archive in ensureStorage():
+  // reconcileSharedArchive adopts every stored mod in place. The old
+  // re-install-and-prune auto-restore would give the main Mod Command's
+  // stored copies new ids and delete the originals it still uses.)
   win.webContents.once('did-finish-load', async () => {
-    const results = await autoRestoreFromArchive();
-    if (results) {
-      sendEvent({ type: 'state', state: fullState() });
-      sendEvent({
-        type: 'toast',
-        message: `Restored from the mod archive: ${results.imported.length} mod(s), ${results.profiles} profile(s), ${results.vault} archived version(s).`,
-      });
-    }
     // One-time automatic existing-mods scan after the first game connection —
     // the review dialog opens by itself when there is anything to adopt.
     if (!store.settings.firstScanDone && store.settings.gamePath) {
@@ -1234,8 +1528,15 @@ function fullState() {
       ...steam.updateFreezeStatus(store.settings.gamePath),
     },
     modCompat,
+    // Shared mod archive with the main Mod Command (see ensureStorage).
+    sharedArchive: {
+      upstreamRunning,
+      shared: archiveActive() && path.basename(store.storageRoot) === ARCHIVE_DIR_NAME,
+    },
     ue4ssOrder: store.settings.gamePath ? engine.ue4ssOrderState() : { managed: [], others: [], applied: false },
-    mods: store.mods,
+    // storedMissing: the mod's library copy is gone (the main Mod Command
+    // removed it from the shared archive) — the row offers re-download/remove.
+    mods: store.mods.map((m) => (engine.storedCopyMissing(m) ? { ...m, storedMissing: true } : m)),
     conflicts,
     ue4ssHooks,
     // release = the GitHub release this app installed (null for a copy the
@@ -1590,8 +1891,17 @@ const handlers = {
     const name = (store.getMod(id) || {}).name;
     // Optional files go with the mod they belong to.
     const kids = engine.childrenOf(id).length;
+    keptSharedNames = [];
     engine.uninstall(id, force);
     log('info', `uninstalled "${name}"${kids ? ` and its ${kids} optional file(s)` : ''}`);
+    if (keptSharedNames.length) {
+      store.save();
+      sendEvent({
+        type: 'toast',
+        message: `Removed “${name}” from Mod Command X. Its stored copy was kept — Mod Command still uses it (the two apps share one mod archive).`,
+      });
+    }
+    keptSharedNames = [];
     return fullState();
   },
   'rename-mod': async (_e, { id, name }) => { engine.rename(id, name); return fullState(); },

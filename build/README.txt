@@ -29,8 +29,10 @@ QUICK START
 
 Mod Command X keeps its settings in %APPDATA%\ModCommandX and your mod archive
 (library, backups, archived versions) in the game folder under
-"ModCommandXArchive" - nothing is written next to the exe, so you can move or
-replace the exe freely. Reinstalling a mod at another version joins the same
+"ModCommandArchive" - the same archive the regular Mod Command uses, so each mod
+is stored once. Don't run both apps at the same time, and note that removing a
+mod in Mod Command removes its stored copy for Mod Command X too. Nothing is
+written next to the exe, so you can move or replace the exe freely. Reinstalling a mod at another version joins the same
 entry: use its "versions" button to roll back or try an archived version.
 
 UNINSTALLING
