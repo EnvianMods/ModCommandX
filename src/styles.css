@@ -838,6 +838,9 @@ body.reduced-motion * { transition: none !important; animation: none !important;
 }
 .launcher-banner-glyph { color: var(--amber); font-size: 16px; text-shadow: 0 0 10px rgba(var(--amber-glow-rgb), 0.5); }
 .launcher-banner-text { font-size: 12.5px; color: var(--text); }
+/* The main Mod Command is running (shared mod archive): bottom-left, clear of
+   the update banner (top) and the toasts (bottom-right). */
+.shared-archive-banner { top: auto; bottom: 22px; left: 22px; transform: none; max-width: 520px; }
 
 /* ---------- toasts ---------- */
 .toast-stack {

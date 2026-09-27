@@ -8,22 +8,23 @@ distributed **only** through the releases of
 [github.com/EnvianMods/ModCommandX](https://github.com/EnvianMods/ModCommandX/releases) —
 never on Nexus Mods — and differs from the upstream app in two ways:
 
-- **Its own identity, side by side.** X installs next to the upstream app and shares
-  nothing with it: its own app data (`%APPDATA%\ModCommandX`), its own Electron profile
-  (`%APPDATA%\Mod Command X` — single-instance lock, embedded-Nexus cookies, caches),
-  its own game-side archive (`<game>\ModCommandXArchive`), its own Nexus
-  identification (`Application-Name: Mod Command X`) and its own update check (the
-  GitHub releases above). It never migrates, imports or deletes the upstream app's data
-  or archive on its own — use Import existing → "Import from a manager folder…" if you
-  want to copy mods over deliberately.
+- **Its own identity, side by side — one shared mod archive.** X installs next to the
+  upstream app with its own app data (`%APPDATA%\ModCommandX` — settings, API key),
+  its own Electron profile (`%APPDATA%\Mod Command X` — single-instance lock,
+  embedded-Nexus cookies, caches), its own Nexus identification
+  (`Application-Name: Mod Command X`) and its own update check (the GitHub releases
+  above). It never migrates the upstream app's settings or credentials. What the two
+  apps **share** is the game-side mod archive, `<game>\ModCommandArchive`: one stored
+  copy of each mod, used by both (see [The shared mod archive](#the-shared-mod-archive)).
 - **Nexus access by personal API key.** X authenticates with your own Nexus Mods API
   key (Settings → Nexus Mods) instead of the upstream app's OAuth sign-in.
 
-> **Do not run both apps against the same game install at the same time.** Both deploy
+> **Do not run both apps at the same time.** They share one mod archive and deploy
 > into the same game mod folders (`~mods`, `LogicMods`, `ue4ss\Mods`, UE4SS
-> `mods.txt`), so each would see the other's files as unmanaged and undo the other's
-> load order. One game install, one active manager — switch by disabling all mods in
-> one before enabling them in the other. That is not supported beyond this note.
+> `mods.txt`); the upstream app knows nothing about X, so changes made while both are
+> open can undo each other. X shows a banner while Mod Command is open — close it
+> before changing mods. **Removing a mod in Mod Command deletes its stored copy for X
+> too** (X then shows it as "stored copy missing": download it again, or uninstall it).
 
 ## Run it
 
@@ -467,19 +468,55 @@ data/              settings when running from source (shipped builds use %APPDAT
 ```
 
 Mods keep their canonical files in the **mod archive** — by default
-`<game>\ModCommandXArchive\` (library/ + backups/ + versions/ + a mirrored
+`<game>\ModCommandArchive\` (library/ + backups/ + versions/ + a mirrored
 manifest), so mods survive app updates and deletions; Settings → Paths can move
-it anywhere (copy-verify-delete migration) or reset it. The upstream app's
-`ModCommandArchive` / `ZeroCompanyModArchive` folders beside it are never read,
-renamed, merged or deleted automatically.
+it anywhere or reset it (moving away copies only X's own mods — see below).
 Enabling copies files into the game, disabling removes them, uninstalling
-deletes the library copy. A fresh install that finds an archive restores
-everything from it automatically (only X's own archive), and a one-time scan after the first game
+deletes the library copy (unless Mod Command still uses it). A fresh install
+that finds the archive picks up every stored mod in place, and a one-time scan after the first game
 connection offers any unmanaged/orphaned/other-manager mods for adoption (also
 on demand: Import existing → "Import from a manager folder…"). The settings
 file itself lives in the per-user app-data folder —
 `%APPDATA%\ModCommandX` on Windows — never beside the exe
 (`data/manager-data.json` when running from source).
+
+### The shared mod archive
+
+`<game>\ModCommandArchive` is the upstream Mod Command's own archive folder, and
+X uses it too, so a mod is stored once no matter which app installed it:
+
+- **Adoption, no copies.** On every start X reads the archive's mirrored manifest
+  (and, read-only, Mod Command's own `%APPDATA%\ZeroCompanyModCommand\manager-data.json`)
+  and adds any mod it doesn't know yet — pointing at the same `library/<id>`
+  folder. Only mod records come over (never Mod Command's settings, sign-in or
+  theme); whether an adopted mod is on is read from what is actually in the game.
+  A mod Mod Command switched on/off since is shown that way in X too.
+- **The mirror is merged.** When X saves, `ModCommandArchive\manager-data.json`
+  keeps Mod Command's records, settings block and profiles exactly as Mod Command
+  wrote them and adds X's records, plus a small `modCommandX` block that Mod
+  Command ignores. Mod Command rewrites the mirror with only its own records
+  when it saves; X re-adds its own the next time it starts. A fresh Mod Command
+  install restores from the mirror (X's mods included) — it re-installs each
+  mod under a new id and removes the old folder; X follows those new ids on its
+  next start.
+- **Removing a mod in X** keeps the stored copy when Mod Command still lists that
+  mod (a toast says so) and deletes it otherwise. **Removing a mod in Mod Command
+  deletes the stored copy** — Mod Command 1.9.14 has no idea X uses it — and X
+  shows the mod as *stored copy missing* (download it again from its source, or
+  uninstall it). Updating a shared mod in X stores the new version under a new
+  id and leaves Mod Command's copy in place.
+- **Moving the archive** (Settings → Paths → Change…) copies X's own mods to the
+  new place; the ones Mod Command also uses stay in `ModCommandArchive` as well.
+- **X's old archive.** Builds of X before this change used `<game>\ModCommandXArchive`.
+  On first start X moves its contents into `ModCommandArchive` (copy, verify,
+  delete; never overwriting — a same-id entry with different content moves in
+  under a new id and X's records follow), then removes the old folder once it is
+  empty. A toast summarises what moved; it is safe to interrupt and resumes on
+  the next start.
+- **One at a time.** X checks every 10 seconds whether Mod Command is running and
+  shows a banner while it is. X can't stop Mod Command from changing the archive.
+- The pre-1.9.0 `ZeroCompanyModArchive` stays Mod Command's to migrate; X never
+  touches it.
 
 Installs are **version-aware**: a mod whose `modinfo.json` names the same
 title (and author) as an installed mod joins that mod's line instead of
@@ -496,8 +533,8 @@ npm run dist
 
 produces `release/ModCommandX.exe` — a single portable executable. When run, it keeps
 its settings in `%APPDATA%\ModCommandX` and the mod archive in the game folder under
-`ModCommandXArchive` — nothing is written beside the exe (the dev `data/` folder is
-separate). Nothing from the upstream app is migrated.
+`ModCommandArchive` (shared with Mod Command) — nothing is written beside the exe (the
+dev `data/` folder is separate). The upstream app's settings are never migrated.
 The `nxm://` registration from a portable exe points at the exe's on-disk location, so
 keep it somewhere permanent. Only one app can own `nxm://` at a time: registering it in
 X takes it from the upstream app, and vice versa.

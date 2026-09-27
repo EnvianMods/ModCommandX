@@ -164,6 +164,7 @@ const SAVE_CAVEAT = 'Unequip anything from this mod in game and save before disa
 
 function render() {
   if (!state) return;
+  renderSharedArchiveBanner();
   document.body.classList.toggle('reduced-motion', !!state.settings.reducedMotion);
   applyTheme(state.settings.theme);
 
@@ -497,6 +498,29 @@ function renderMods() {
       if (!rtOk) zcChip.addEventListener('click', () => installZcsdkRuntime());
     }
 
+    // Shared mod archive: the stored copy is gone (Mod Command removed the mod
+    // from the archive both apps use). Offer to remove the entry; a linked mod
+    // can be downloaded again from its source badge, which replaces it.
+    let missingChip = null;
+    if (mod.storedMissing) {
+      missingChip = document.createElement('button');
+      missingChip.className = 'mod-conflict-flag build-chip';
+      missingChip.textContent = '⚠ stored copy missing';
+      const src = originType === 'nexus' ? 'its Nexus page' : (originType === 'github' ? 'its GitHub release' : null);
+      missingChip.title = 'This mod’s stored copy is gone from the shared mod archive — removed in Mod Command, or deleted by hand. '
+        + (src ? `Download it again from ${src} (the source badge) to restore it, or click to remove it from this list.` : 'Click to remove it from this list.');
+      missingChip.addEventListener('click', async () => {
+        if (!window.confirm(`The stored copy of “${mod.name}” is missing — it was removed from the mod archive this app shares with Mod Command.
+
+`
+          + `${src ? `To keep it, cancel and download it again from ${src}.
+
+` : ''}Remove “${mod.name}” from Mod Command X now? Any of its files still in the game are removed.`)) return;
+        const data = await verifiedCall('uninstallMod', [mod.id], 'Uninstall');
+        if (data) { state = data; render(); toast(`“${mod.name}” removed`); }
+      });
+    }
+
     const toggle = document.createElement('input');
     toggle.type = 'checkbox';
     toggle.className = 'switch';
@@ -588,6 +612,7 @@ function renderMods() {
     if (eaChip) row.appendChild(eaChip);
     if (zcChip) row.appendChild(zcChip);
     if (buildChip) row.appendChild(buildChip);
+    if (missingChip) row.appendChild(missingChip);
     if (updateEl) row.appendChild(updateEl);
     row.append(toggle, actions);
     list.appendChild(row);
@@ -1376,7 +1401,7 @@ function renderSettings() {
   $('#set-game-path').textContent = state.settings.gamePath || 'Not set';
   const storage = state.storage || {};
   $('#set-storage-path').textContent = storage.root
-    ? `${storage.root}${storage.inGameFolder ? '  (game folder — survives app updates)' : (storage.custom ? '  (custom)' : '  (app folder)')}`
+    ? `${storage.root}${storage.inGameFolder ? '  (game folder, shared with Mod Command — one copy of each mod)' : (storage.custom ? '  (custom)' : '  (app folder)')}`
     : '—';
   $('#btn-storage-reset').disabled = !state.settings.gamePath || storage.inGameFolder;
   $('#set-retoc-path').textContent = state.settings.retocPath || (state.retoc.found ? `Auto: ${state.retoc.path}` : 'Auto-detect (not found)');
@@ -4218,6 +4243,13 @@ $('#btn-fomod-cancel').addEventListener('click', () => {
 
 // ------------------------------------------------------------------ push events (nxm installs, download progress)
 
+// The main Mod Command is open: both apps share one mod archive (and the
+// game's mod folders), so changes should wait until it is closed.
+function renderSharedArchiveBanner() {
+  const on = !!(state && state.sharedArchive && state.sharedArchive.upstreamRunning);
+  $('#shared-archive-banner').classList.toggle('hidden', !on);
+}
+
 let launcherUpdateUrl = null;
 function showLauncherBanner(info) {
   launcherUpdateUrl = info.url;
@@ -4267,6 +4299,11 @@ window.zc.onEvent((payload) => {
   if (payload.type === 'first-scan') {
     pendingFirstScan = true;
     if ($('#setup-modal').classList.contains('hidden')) maybeRunFirstScan();
+    return;
+  }
+  if (payload.type === 'shared-archive') {
+    if (state) { state.sharedArchive = { ...(state.sharedArchive || {}), upstreamRunning: !!payload.upstreamRunning }; }
+    renderSharedArchiveBanner();
     return;
   }
   if (payload.type === 'toast') {
