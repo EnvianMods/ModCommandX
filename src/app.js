@@ -3001,6 +3001,7 @@ function openNexusDownload(name, url, opts = {}) {
     return;
   }
   nexusDl.open = true; nexusDl.sawProgress = false; nexusDl.done = false; nexusDl.target = url;
+  nexusDl.sawLogin = false;
   nexusDl.viewOnly = !!opts.view;
   nexusDl.auto = !opts.view && opts.auto
     ? { modId: opts.auto.modId, fileId: opts.auto.fileId, url, on: nexusAutoEnabled(),
@@ -3074,21 +3075,21 @@ async function nexusAutoTick() {
   let url = '';
   try { url = view.getURL(); } catch (_) { return; }
   if (!url || url === 'about:blank') return;
+  // A Cloudflare check page ("Just a moment…"): hands off entirely — no script
+  // in the page, no navigation — until the user has completed it.
+  let title = ''; try { title = view.getTitle(); } catch (_) {}
+  if (NexusAutoclick.isChallengeTitle(title)) {
+    setNexusStrip('Nexus is checking this browser — complete the check yourself; the download continues afterwards.', 'warn');
+    return;
+  }
   if (NexusAutoclick.isLoginPage(url)) {
     a.sawLogin = true;
     setNexusStrip('Sign in to Nexus Mods here — the download continues by itself once you are back on the file.', 'warn');
     return;
   }
   if (!NexusAutoclick.isTargetPage(url, a.url)) {
-    let sameSite = false;
-    try { sameSite = new URL(url).origin === new URL(a.url).origin; } catch (_) {}
-    if (a.sawLogin && sameSite) {
-      // Signed in and Nexus sent them somewhere else: back to the file.
-      a.sawLogin = false;
-      setNexusStrip('Signed in — back to the file…');
-      try { view.loadURL(a.url); } catch (_) {}
-      return;
-    }
+    // (Signed in and Nexus sent them somewhere else: refreshNexusAccount takes
+    // them back to the file once the page positively shows the account.)
     setNexusStrip('Auto-click paused — it only runs on the file’s download page. Click “Slow download” there to continue.', 'warn');
     return;
   }
@@ -3151,6 +3152,12 @@ async function refreshNexusAccount() {
   const view = $('#nexus-dl-view');
   const chip = $('#nexus-dl-account');
   if (!view || !chip) return;
+  // Never script the sign-in pages or a Cloudflare check page — the user is
+  // mid-login / mid-check there and the account state cannot change yet.
+  let cur = '';
+  try { cur = view.getURL(); } catch (_) { return; }
+  if (!/^https?:/i.test(cur) || NexusAutoclick.isSignInFlow(cur)) return;
+  try { if (NexusAutoclick.isChallengeTitle(view.getTitle())) return; } catch (_) { return; }
   let res = null;
   try {
     // Conservative: only claim "signed in" on a POSITIVE marker (a logout link
@@ -3172,10 +3179,14 @@ async function refreshNexusAccount() {
     chip.textContent = res.name ? `◈ ${res.name}` : '◈ Signed in';
     chip.classList.add('in');
     chip.title = 'Signed in to Nexus Mods in this panel';
-    // If they just signed in on the auth page, return them to the mod.
-    let cur = ''; try { cur = view.getURL(); } catch (_) {}
-    if (nexusDl.target && /users\.nexusmods\.com\/auth/i.test(cur)) {
-      try { view.loadURL(nexusDl.target); } catch (_) {}
+    // They went through the sign-in pages and Nexus now shows their account on
+    // some other page: return them to the file (once).
+    if (nexusDl.open && nexusDl.sawLogin) {
+      nexusDl.sawLogin = false;
+      if (nexusDl.target && !NexusAutoclick.isTargetPage(cur, nexusDl.target)) {
+        if (nexusDl.auto) setNexusStrip('Signed in — back to the file…');
+        try { view.loadURL(nexusDl.target); } catch (_) {}
+      }
     }
   } else {
     chip.textContent = '◈ Sign in to Nexus';
@@ -3200,15 +3211,18 @@ async function refreshNexusAccount() {
     refreshNexusAccount();
   });
   // A new document is a new page load for the auto-click's once-per-load rule.
-  view.addEventListener('did-navigate', () => {
+  view.addEventListener('did-navigate', (e) => {
     if (nexusDl.auto) nexusDl.auto.docClicked = false;
+    if (NexusAutoclick.isLoginPage(e.url)) nexusDl.sawLogin = true;
   });
   const reload = $('#nexus-dl-reload');
   if (reload) reload.addEventListener('click', () => { try { view.reload(); } catch (_) {} });
   const ext = $('#nexus-dl-ext');
   if (ext) ext.addEventListener('click', () => {
-    let u = 'about:blank';
-    try { u = view.getURL(); } catch (_) {}
+    // The file this panel was opened for (not a sign-in or check page the
+    // panel happens to show); otherwise whatever Nexus page is showing.
+    let u = nexusDl.target || '';
+    if (!/^https:\/\/([a-z0-9-]+\.)?nexusmods\.com\//i.test(u)) { try { u = view.getURL(); } catch (_) {} }
     if (u && u.startsWith('http')) call('openExternal', u);
   });
   const acct = $('#nexus-dl-account');

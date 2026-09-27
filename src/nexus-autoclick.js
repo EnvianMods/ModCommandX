@@ -250,11 +250,27 @@
     })());
   }
 
+  // The sign-in flow itself (form, two-factor, OAuth consent) — where the user
+  // is typing and the page's Turnstile check lives. Narrower than isLoginPage:
+  // an account page on users.nexusmods.com is not part of it.
+  function isSignInFlow(url) {
+    let p = '';
+    try { p = new URL(url).pathname; } catch (_) { return false; }
+    return /\/(auth|login|sign_in|sign_up|register|oauth|two_factor)(\/|$)/i.test(p);
+  }
+
+  // A Cloudflare interstitial ("Just a moment..."), judged from the webview's
+  // title alone so the renderer can stay out of the page entirely while the
+  // user completes the check.
+  function isChallengeTitle(title) {
+    return new RegExp(RULES.challenge.title[0], RULES.challenge.title[1]).test(title || '');
+  }
+
   // target = { modId, fileId }
   function stepCode(target) {
     const t = { modId: Number(target.modId), fileId: Number(target.fileId), key: `${target.modId}:${target.fileId}` };
     return `(${agentStep.toString()})(${JSON.stringify(RULES)}, ${JSON.stringify(t)})`;
   }
 
-  root.NexusAutoclick = { RULES, isTargetPage, isLoginPage, stepCode, agentStep };
+  root.NexusAutoclick = { RULES, isTargetPage, isLoginPage, isSignInFlow, isChallengeTitle, stepCode, agentStep };
 })(typeof window !== 'undefined' ? window : globalThis);
