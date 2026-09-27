@@ -37,6 +37,36 @@ First run auto-detects the game through Steam (library folders + `appmanifest_20
 A copy of [retoc](https://github.com/trumank/retoc) (0.1.5) ships in `tools/` and is used
 automatically for IoStore package inspection; a different copy can be selected in Settings.
 
+## How your credentials are stored
+
+- **Nexus API key** — encrypted with your OS account through Electron `safeStorage`
+  (Windows DPAPI, macOS Keychain, a Linux keyring via libsecret/kwallet) and saved as
+  `nexusApiKeyEncrypted` in `%APPDATA%\ModCommandX\manager-data.json`. It is **never
+  written in plain text**: on a system with no secure key store (including Linux's
+  obfuscation-only `basic_text` fallback) the key is kept in memory for the session only
+  and Settings says so — enter it again next time. A plaintext key left by an older
+  build is encrypted (or moved into memory) on startup and removed from the settings
+  file and from the archive's `manager-data.json` mirror; the mirror in the game folder
+  never carries the key, not even encrypted. **Clear** wipes the stored field and the
+  in-memory copy. The decrypted key never reaches the UI, and the session log, support
+  report and error messages pass through one redactor (`lib/redact.js`) that masks the
+  key, `apikey` headers, nxm `key=`/`expires=` values and signed download-URL query strings.
+- **Nexus website login** (the in-app Nexus panel, `persist:nexus`) — cookies live in
+  `%APPDATA%\Mod Command X\Partitions\nexus`. The release build turns on Electron's
+  `EnableCookieEncryption` fuse (`build/after-pack.js`), so cookie values are encrypted
+  with the OS key store; a dev run (`npm start` / `npx electron .`) uses the stock
+  Electron binary and stores them **unencrypted**. Settings → Nexus Mods → **Sign out
+  of the Nexus website panel** clears that session (cookies, site data, cache).
+- The release build also disables `NODE_OPTIONS` and `--inspect`. `RunAsNode` stays on
+  on purpose: the hosted Mod SDK workbench runs its build scripts with this exe in Node
+  mode when no `node` is on PATH.
+- What this protects against: other Windows users and offline theft of the disk or a
+  copied profile. It does **not** protect against malware running as you — anything
+  running under your account can ask DPAPI to decrypt, as it could for your browser.
+- Owner tools (`owner-tools/`) take GitHub tokens from `gh auth login` (the GitHub CLI's
+  own credential store) when no token file or `GITHUB_TOKEN` is set; token files are
+  git-ignored and excluded from source zips.
+
 ## Features
 
 - **Command Deck** — game detection (path, Steam build ID), mod/conflict counts,
@@ -230,7 +260,7 @@ automatically for IoStore package inspection; a different copy can be selected i
   is stored — that is also where your name and premium status come from, and premium
   decides direct download vs. starting it on the website (One-click downloads, below) — then kept
   encrypted with your OS user credentials (Windows DPAPI via Electron safeStorage;
-  plaintext only when the OS store is unavailable). It is never shown to the UI,
+  never in plain text — see *How your credentials are stored*). It is never shown to the UI,
   never written to the log or the diagnostics report, only ever sent to
   nexusmods.com as the `apikey` header, and never deleted by the app — only your
   own **Clear** removes it. **Verify** re-checks it. Register the `nxm://` handler and "Mod Manager
