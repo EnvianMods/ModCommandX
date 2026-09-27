@@ -374,7 +374,29 @@ automatically for IoStore package inspection; a different copy can be selected i
   hooks/loops) and cause frame stutter; folders are matched by `modinfo.json`
   title or identical entry script, so a copy with a manifest and one without
   still pair up. The report names each folder and whether it's managed.
-- **Settings** — game/retoc/7z paths, close-on-launch, reduced motion.
+- **Settings** — game/retoc/7z paths, theme, close-on-launch, reduced motion.
+- **Themes** — Settings → Behavior → **Theme** switches between **Mod Command X**
+  (the default) and **Mod Command** (the original holo-terminal look, pixel for
+  pixel). It applies instantly, is saved as `settings.theme`
+  (`modcommandx` / `modcommand`), and the window opens in it from the first frame:
+  the preload reads it synchronously and `src/theme-boot.js` sets
+  `<html data-theme>` before `styles.css` renders. Mod Command X is the same layout
+  restyled as a black-market bounty board in Boba Fett's colours — scorched
+  gunmetal `#15171a`/`#1d2022`, weathered armor green `#a9bb86`/`#879766`
+  (accents), dented ochre `#c3953a` (highlights, solid gold primary and launch
+  buttons), rust `#e5704f`/`#8e2b20` (danger, errors, card-title tags), fresh
+  green `#8fc160` (success), bone `#ebe3cf` text and khaki `#b9ad8f` secondary
+  text — with soot shadows instead of neon glow, square pills and switches, a
+  condensed system heading face (Bahnschrift → Agency FB → Roboto/Ubuntu/DejaVu
+  Condensed → Arial Narrow; nothing downloaded), a T-visor rule under view titles,
+  hazard stripes on the launch band, progress bars and drop zone, and a static
+  CSS-only scuffed texture. All text and button labels meet WCAG AA (≥ 4.68:1).
+  How it is built: every colour, glow, gradient, font and radius in
+  `src/styles.css` is a `:root` token holding the Mod Command value, and
+  `[data-theme="modcommandx"]` at the end of the file overrides the tokens and adds
+  the few accent rules; the only non-CSS piece is the Holonet "no image" art
+  (`src/assets/mod-placeholder-x.svg`, swapped by `app.js`). The Nexus website in
+  the download panel and a linked SDK's Forge workbench keep their own looks.
 
 ## Mod metadata (`modinfo.json`)
 
@@ -408,7 +430,8 @@ lib/steam.js       Steam library scan + appmanifest parsing (AppID 2075800)
 lib/store.js       portable JSON store  → data/manager-data.json
 lib/mods.js        mod engine: classify/install/deploy/order/conflicts/UE4SS
 lib/archive.js     zip (bsdtar / extract-zip) + 7z/rar (7-Zip CLI — tools/7-Zip on Windows, system copy on Linux)
-src/               UI (index.html / styles.css / app.js) — holo-terminal theme
+src/               UI (index.html / styles.css / app.js) — Mod Command X + Mod Command themes
+src/theme-boot.js  sets <html data-theme> from the saved theme before first paint
 src/nexus-autoclick.js  free-account one-click: every Nexus download-page selector + the in-page auto-click
 data/              settings when running from source (shipped builds use %APPDATA%\ModCommandX)
 ```

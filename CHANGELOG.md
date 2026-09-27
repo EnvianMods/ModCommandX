@@ -124,6 +124,36 @@ package.json (the version Mod SDK manifests are checked against).
   never goes more than one level deep, and a mod's own other versions from the
   same Nexus page are not offered — those belong to the ⧗ version picker.
 
+**Themes — a bounty-hunter look by default, the original one a click away**
+- Settings → Behavior → **Theme**: **Mod Command X** (the new default) or
+  **Mod Command** (the holo-terminal look, exactly as before — same pixels).
+  The change applies instantly, is remembered, and the app opens in the saved
+  theme from its very first frame (no flash of the other one).
+- **Mod Command X** keeps every screen's layout and restyles it after Boba
+  Fett's kit, as a grimy black-market bounty board: scorched gunmetal
+  backgrounds (`#15171a`, `#1d2022`) under olive-tinted armor plates;
+  weathered Mandalorian green for accents, headings and active items
+  (`#a9bb86`, worn `#879766`); dented ochre gold for highlights, the launch
+  button and primary buttons (`#c3953a`, solid gold with dark ink); oxidised
+  rust for danger and errors (`#e5704f` text, `#8e2b20` fills and the tag on
+  every card title); fresh armor green for success (`#8fc160`); bone text
+  (`#ebe3cf`) and khaki flight-suit secondary text (`#b9ad8f`). Neon glows
+  become soot shadows; badges, switches and scrollbars go square; headings use
+  a condensed stencil-like system face (Bahnschrift, else Agency FB / Roboto,
+  Ubuntu or DejaVu Condensed / Arial Narrow — nothing is downloaded).
+- Sparing accents: a T-visor rule under every view title and a visor stem
+  under the active Holonet tab, a hazard band above LAUNCH GAME,
+  hazard-striped progress bars and drop zone, a gold edge on dialogs and the
+  Nexus panel, an ochre focus ring, and a faint CSS-only scuffed texture that
+  never moves (no images, no filters over the scrolling lists). Mod cards
+  without a picture get their own "no image" art in the same palette.
+- Readable by the numbers: every text colour and button label meets WCAG AA
+  contrast on its surface — body text 12.3–14.0:1, secondary text 7.1–8.1:1,
+  green / ochre / rust text 5.0–8.7:1, dark ink on the gold buttons 4.8–8.0:1.
+- Not themed: the Nexus website inside the download panel and, when an SDK is
+  linked, the SDK's own Forge workbench (both bring their own look), and the
+  operating system's own menus and dialogs.
+
 ---
 
 # Inherited history — Zero Company Mod Command up to 1.9.14
