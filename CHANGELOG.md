@@ -1,6 +1,6 @@
 # Mod Command X — Changelog
 
-## Mod Command X 1.0.0 (unreleased)
+## Mod Command X 1.0.0 — 2026-09-27
 
 Mod Command X is a private side-project build of Zero Company Mod Command,
 forked from upstream 1.9.14 and distributed only through the releases of
