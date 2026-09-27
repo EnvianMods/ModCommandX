@@ -1,5 +1,5 @@
 """
-Zero Company Mod Command — application icon generator.
+Mod Command X — application icon generator.
 
 Draws the app's signature holo emblem (cyan hexagon + amber six-spoke command
 burst on a dark space tile) with Pillow at 4x supersampling, then emits:

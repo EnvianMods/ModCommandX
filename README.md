@@ -1,11 +1,33 @@
-# Zero Company Mod Command
+# Mod Command X
 
 A Star Wars themed mod manager and launcher for **STAR WARS: Zero Company**, built as an
 Electron app with a holo-terminal aesthetic.
 
+**Mod Command X is a private side-project build** forked from the upstream Zero Company Mod Command 1.9.14. It is
+distributed **only** through the releases of
+[github.com/EnvianMods/ModCommandX](https://github.com/EnvianMods/ModCommandX/releases) —
+never on Nexus Mods — and differs from the upstream app in two ways:
+
+- **Its own identity, side by side.** X installs next to the upstream app and shares
+  nothing with it: its own app data (`%APPDATA%\ModCommandX`), its own Electron profile
+  (`%APPDATA%\Mod Command X` — single-instance lock, embedded-Nexus cookies, caches),
+  its own game-side archive (`<game>\ModCommandXArchive`), its own Nexus
+  identification (`Application-Name: Mod Command X`) and its own update check (the
+  GitHub releases above). It never migrates, imports or deletes the upstream app's data
+  or archive on its own — use Import existing → "Import from a manager folder…" if you
+  want to copy mods over deliberately.
+- **Nexus access by personal API key.** X authenticates with your own Nexus Mods API
+  key (Settings → Nexus Mods) instead of the upstream app's OAuth sign-in.
+
+> **Do not run both apps against the same game install at the same time.** Both deploy
+> into the same game mod folders (`~mods`, `LogicMods`, `ue4ss\Mods`, UE4SS
+> `mods.txt`), so each would see the other's files as unmanaged and undo the other's
+> load order. One game install, one active manager — switch by disabling all mods in
+> one before enabling them in the other. That is not supported beyond this note.
+
 ## Run it
 
-Double-click **`Zero Company Mod Command.bat`**, or from this folder:
+Double-click **`Mod Command X.bat`**, or from this folder:
 
 ```
 npm start
@@ -165,24 +187,26 @@ automatically for IoStore package inspection; a different copy can be selected i
   and duplicate keys exactly (only values are editable); Raw view edits the full text.
   The original file is backed up to `.zcbak` on first save.
 - **Adult content follows your Nexus account** — there is no "show adult content"
-  switch in Mod Command, by design. Signed out, adult-rated mods are filtered out of
-  every listing: browsing, categories, search, the featured strip and the Link wizard
-  (a search by name is not a way past it). Signed in, the app reads your own Nexus
-  account's content preference — the one behind Nexus's age verification — and follows
-  it, blurring adult thumbnails when your account asks for that (hover to reveal).
+  switch in Mod Command X, by design. With no API key, adult-rated mods are filtered out
+  of every listing: browsing, categories, search, the featured strip and the Link
+  wizard (a search by name is not a way past it). With a key, the app reads the key
+  owner's own Nexus content preference (v2 GraphQL `preferences { adult adultBlurImages }`,
+  sent with the `apikey` header — the one behind Nexus's age verification) and follows
+  it, blurring adult thumbnails when your account asks for that (hover to reveal). Any
+  failure to read it counts as "hidden".
   Adult-rated mods always carry an **18+** chip. Settings → Nexus Mods states what is
   in force and links to your Nexus content-preferences page to change it.
-- **◆ Forge — the Mod SDK's workbench, hosted** — point Mod Command at an installed
+- **◆ Forge — the Mod SDK's workbench, hosted** — point Mod Command X at an installed
   Zero Company Mod SDK (Settings → ◆ SDK; Detect looks beside the install and beside
   the game folder) and the Forge view hosts the SDK's own UI, loaded from the SDK
   folder against its embed contract (`<sdk>/tools/sdk-ui/manifest.json`; the host's
-  side is `lib/sdk-link.js`, design in `docs/SDK_LINK.md`). Mod Command ships no copy
-  of the panel, so an SDK update needs no Mod Command release. With no SDK linked the
+  side is `lib/sdk-link.js`, design in `docs/SDK_LINK.md`). Mod Command X ships no copy
+  of the panel, so an SDK update needs no Mod Command X release. With no SDK linked the
   Forge item stays in the rail, dimmed, and opens the "Get the SDK" page (what it is,
   what it needs — including Node.js 22.12+ — one **Get** button, "point at an installed SDK", and a note that the SDK is not open source). That button's
-  destination is **not hard-coded**: it comes from the `sdk` block of the asset repo's
-  `launcher-version.json` — the same file that announces Mod Command's own updates —
-  fetched at startup and hourly, cached in `sdkAssetLinks` so it survives offline, and
+  destination is **not hard-coded**: it comes from the `sdk` block of the shared asset
+  repo's `launcher-version.json` (X reads only that block; its own updates come from
+  its GitHub releases) — fetched at startup and hourly, cached in `sdkAssetLinks` so it survives offline, and
   labelled from the url's own host (Nexus / GitHub); with nothing ever fetched it shows
   a dim "could not be fetched" line instead of a dead link. Detect also reads the SDK
   workbench's own settings (`%APPDATA%\Zero Company Mod SDK\sdk-ui-settings.json`); once
@@ -193,27 +217,31 @@ automatically for IoStore package inspection; a different copy can be selected i
   The ◆ SDK card names the installed SDK version with its public name and links the SDK's own
   `docs/CHANGELOG.md` ("What's new in the SDK"). Against SDK 1.0.3 the hosted workbench also brings
   its first-run walkthrough, build stepper, mod-def editor, asset drop zone and Test / Conflicts /
-  Publish views, with no change to Mod Command.
+  Publish views, with no change to Mod Command X.
 - **Holonet browser** — an in-app Nexus Mods browser for Zero Company: grid of mods
   with thumbnails, author/version/category, download & endorsement counts, live search,
   category filter, and sorting (downloads / endorsements / newest / updated / name),
-  with paging. Powered by the Nexus GraphQL v2 API (browsing needs no sign-in). The
+  with paging. Powered by the Nexus GraphQL v2 API (browsing needs no API key). The
   Install button downloads+installs directly for premium accounts; non-premium
   accounts get the mod's Files page opened — pressing "Mod Manager Download" there
   sends the nxm:// link back into the manager, which installs it automatically.
-- **Nexus Mods integration** — press **Sign in with Nexus Mods** in Settings: the
-  app opens nexusmods.com in your own browser (OAuth 2.0 authorization code +
-  PKCE, per Nexus's app guidelines), you approve Mod Command there, and it never
-  sees your password. Only the access tokens Nexus issues are kept, encrypted
-  with your OS user credentials (Windows DPAPI via Electron safeStorage), never
-  shown to the UI, and only ever sent to nexusmods.com; revoke access any time
-  from your Nexus account page. Register the `nxm://` handler and "Mod Manager
+- **Nexus Mods integration** — paste your personal Nexus Mods API key in Settings →
+  Nexus Mods (**Get my API key ↗** opens https://next.nexusmods.com/settings/api-keys;
+  scroll to *Personal API Key*, press *Request an API key* if you have none, copy it)
+  and press **Save**. The key is checked against `/v1/users/validate.json` before it
+  is stored — that is also where your name and premium status come from, and premium
+  decides direct download vs. the website's "Mod Manager Download" — then kept
+  encrypted with your OS user credentials (Windows DPAPI via Electron safeStorage;
+  plaintext only when the OS store is unavailable). It is never shown to the UI,
+  never written to the log or the diagnostics report, only ever sent to
+  nexusmods.com as the `apikey` header, and never deleted by the app — only your
+  own **Clear** removes it. **Verify** re-checks it. Register the `nxm://` handler and "Mod Manager
   Download" buttons on nexusmods.com install straight into the manager, with
   download progress, auto naming/version from Nexus mod info. Non-premium
   accounts must start downloads from the website button (the nxm link carries the
-  required key/expires). Every request to Nexus — v1, GraphQL, the OAuth endpoints
-  and the download CDN — goes out through one helper (`lib/nexus-http.js`) that
-  identifies the app by registered name, version and User-Agent.
+  required key/expires). Every request to Nexus — v1, GraphQL and the download CDN —
+  goes out through one helper (`lib/nexus-http.js`) that identifies the app as
+  `Mod Command X` with its version and a `ModCommandX/<version>` User-Agent.
 - **Request allowance, read from Nexus** — Settings → Nexus Mods shows the quota
   Nexus reports on every reply ("API requests: 1,950 of 2,000 this hour (resets
   16:00) · 19,900 of 20,000 today (resets 00:00 UTC)"). When it runs out the app
@@ -241,7 +269,7 @@ automatically for IoStore package inspection; a different copy can be selected i
   mod it belongs to.
 - **Grouping mods you installed yourself** *(experimental — `feat/optional-files`)*
   — nothing about that nesting needs Nexus. The **⊕ Optional files** button is on
-  every mod, linked or not, signed in or not, and its second section, **ALREADY
+  every mod, linked or not, with an API key or not, and its second section, **ALREADY
   INSTALLED**, lists the other installed mods that can be grouped under this one:
   press **⇲ Group under &lt;mod&gt;** and the row moves into the mod's nested list
   straight away. A mod grouped this way is marked `grouping:"manual"` (downloads
@@ -263,7 +291,7 @@ automatically for IoStore package inspection; a different copy can be selected i
   path — the Settings card, the ZCSDK-runtime prompt and `install-ue4ss` with no
   payload. Premium accounts download it directly; free accounts get the embedded
   Nexus page, whose "Mod Manager Download" comes back as nxm:// into `handleNxm`,
-  which recognises the runtime; signed-out users are offered the sign-in or, on
+  which recognises the runtime; users without an API key are offered adding one or, on
   confirmation, the stock upstream build. The page is read anonymously via
   GraphQL (`refreshNexusLatest()`), and the tested build is recorded with the
   install (`settings.ue4ssInstalled.testedBuild`) and compared with the installed
@@ -292,9 +320,9 @@ automatically for IoStore package inspection; a different copy can be selected i
 - **ZCSDK Runtime one-click install** — Settings → ZCSDK Runtime installs the two
   UE4SS mods (ZCSDKBridge + ZCSDKLoader) that SDK-built content mods need. The SDK
   publishes every runtime build to `github.com/EnvianMods/ZCSDK-Runtime-Release`
-  (a Release zip + `latest.json` at the repo root); Mod Command reads `latest.json`
+  (a Release zip + `latest.json` at the repo root); Mod Command X reads `latest.json`
   at startup (and on "Check for updates"), downloads the newest release, and offers
-  "Update to x" when the installed copy is behind — no Mod Command release needed
+  "Update to x" when the installed copy is behind — no Mod Command X release needed
   for a runtime update. `tools/ZCSDKRuntime.zip` (+ `tools/zcsdk-runtime.json`)
   stays bundled as the offline fallback. Existing copies are vaulted and replaced
   by name; installing an SDK-built mod without a working runtime offers the install
@@ -313,7 +341,7 @@ automatically for IoStore package inspection; a different copy can be selected i
   `lib/report.js`; the in-memory session log lives in `lib/log.js`.
 - **Diagnostics** — installation health scan: game layout, Steam manifest/build,
   `~mods` presence, the `SWZeroCompany/Mods` plugin folder (how many plugin folders
-  are there and how many Mod Command manages, so hand-copied ones are visible),
+  are there and how many Mod Command X manages, so hand-copied ones are visible),
   UE4SS layout, retoc/7-Zip availability, deployed-file audit, conflicts.
   Also flags **duplicate mods** — the same UE4SS mod active under two folders in
   `ue4ss/Mods` (e.g. a manager install plus a leftover from a manual/one-click
@@ -356,21 +384,22 @@ lib/store.js       portable JSON store  → data/manager-data.json
 lib/mods.js        mod engine: classify/install/deploy/order/conflicts/UE4SS
 lib/archive.js     zip (bsdtar / extract-zip) + 7z/rar (7-Zip CLI — tools/7-Zip on Windows, system copy on Linux)
 src/               UI (index.html / styles.css / app.js) — holo-terminal theme
-data/              settings when running from source (shipped builds use %APPDATA%\ZeroCompanyModCommand)
+data/              settings when running from source (shipped builds use %APPDATA%\ModCommandX)
 ```
 
 Mods keep their canonical files in the **mod archive** — by default
-`<game>\ModCommandArchive\` (library/ + backups/ + versions/ + a mirrored
+`<game>\ModCommandXArchive\` (library/ + backups/ + versions/ + a mirrored
 manifest), so mods survive app updates and deletions; Settings → Paths can move
-it anywhere (copy-verify-delete migration) or reset it. A pre-1.9.0 archive
-under the old `ZeroCompanyModArchive` name is renamed in place on startup.
+it anywhere (copy-verify-delete migration) or reset it. The upstream app's
+`ModCommandArchive` / `ZeroCompanyModArchive` folders beside it are never read,
+renamed, merged or deleted automatically.
 Enabling copies files into the game, disabling removes them, uninstalling
 deletes the library copy. A fresh install that finds an archive restores
-everything from it automatically, and a one-time scan after the first game
+everything from it automatically (only X's own archive), and a one-time scan after the first game
 connection offers any unmanaged/orphaned/other-manager mods for adoption (also
 on demand: Import existing → "Import from a manager folder…"). The settings
 file itself lives in the per-user app-data folder —
-`%APPDATA%\ZeroCompanyModCommand` on Windows — never beside the exe
+`%APPDATA%\ModCommandX` on Windows — never beside the exe
 (`data/manager-data.json` when running from source).
 
 Installs are **version-aware**: a mod whose `modinfo.json` names the same
@@ -386,78 +415,54 @@ archived version for rollback or testing.
 npm run dist
 ```
 
-produces `release/ZeroCompanyModCommand.exe` — a single portable executable. When run,
-it keeps its settings in `%APPDATA%\ZeroCompanyModCommand` and the mod archive in the
-game folder under `ModCommandArchive` — nothing is written beside the exe (the dev
-`data/` folder is separate). A pre-1.9.0 `ZeroCompanyModCommand-data` folder next to
-the exe is copied into app-data on first start and left behind renamed `.migrated-<date>`.
+produces `release/ModCommandX.exe` — a single portable executable. When run, it keeps
+its settings in `%APPDATA%\ModCommandX` and the mod archive in the game folder under
+`ModCommandXArchive` — nothing is written beside the exe (the dev `data/` folder is
+separate). Nothing from the upstream app is migrated.
 The `nxm://` registration from a portable exe points at the exe's on-disk location, so
-keep it somewhere permanent. On every launch the portable stub unpacks the app into
-`%TEMP%\ZeroCompanyModCommand` (a fixed name, set by `build.portable.unpackDirName`,
-wiped and re-extracted each run and deleted again on exit) and runs it from there — so
-a user whose antivirus quarantines a runtime file such as `ffmpeg.dll` has one stable
-path to add to their exclusions, and the app names that folder in an error dialog if
-part of the runtime is missing when it starts.
+keep it somewhere permanent. Only one app can own `nxm://` at a time: registering it in
+X takes it from the upstream app, and vice versa.
+On every launch the portable stub unpacks the app into `%TEMP%\ModCommandX` (a fixed
+name, set by `build.portable.unpackDirName`, wiped and re-extracted each run and deleted
+again on exit) and runs it from there — so a user whose antivirus quarantines a runtime
+file such as `ffmpeg.dll` has one stable path to add to their exclusions, and the app
+names that folder in an error dialog if part of the runtime is missing when it starts.
 
-Shipping structure (v1.0.0 onward):
-- version lives in `package.json`; per-version notes in `CHANGELOG.md`
-- the Nexus upload is `release/ZeroCompanyModCommand-v<version>.zip`, containing
-  `ZeroCompanyModCommand.exe` + `README.txt` + `CHANGELOG.md`
-  (the exe filename stays constant across versions so nxm:// registrations survive updates)
-- mod-page art: `src/assets/nexus-banner.png` (header) and `mod-placeholder@2x.png`
+Shipping structure:
+- version lives in `package.json` (X restarted at 1.0.0; `modCommandCompat` records the
+  upstream feature level, 1.9.14, which SDK manifests' `minModCommand` is checked
+  against); per-version notes in `CHANGELOG.md`
+- the release asset is `ModCommandX-v<version>.zip`, containing `ModCommandX.exe` +
+  `README.txt` + `CHANGELOG.md` (the exe filename stays constant across versions so
+  nxm:// registrations survive updates)
 
 ## Releasing
 
-**Distribution policy (2026-09-01, until otherwise stated):** users download from
-NEXUS — update announcements always point at the Nexus mod page, so update traffic
-counts toward download stats, rankings, and Donation Points. GitHub gets a silent
-mirror release (source + zip) for backup and transparency, with no announcement.
+Mod Command X is published **only** as GitHub releases of
+`github.com/EnvianMods/ModCommandX` — never on Nexus Mods, and never to any of the
+upstream project's repos or files. The local repo has no remote by default.
 
-**Nexus ships the SAME exe as GitHub (policy restored 2026-09-10, in
-anticipation of the mod being accepted by Nexus):** the Nexus main file is the
-Windows exe zip (`ZeroCompanyModCommand-v<public>.zip`, identical bytes to the
-GitHub release asset), the optional file is the Linux AppImage zip. Nexus's
-automated scan quarantines unsigned exes until a human reviews them, and — as
-measured on 2026-09-09 — any package with a batch/script file too (only a
-package with no exe/dll/bat/cmd/ps1/py and no nested archive came back
-VERIFIED). While that review is pending, the build-from-source package remains
-available as a fallback: `package-source-release.js` → the source tree +
-`README-BUILD.txt` + `Build.bat.txt`; users install Node.js LTS, run
-`npm run build` (= `npm ci`, `build/fetch-tools.js` for 7-Zip/retoc/ZCSDK
-Runtime, electron-builder) and get the same exe. The packager refuses to emit a
-package containing a binary or nested archive.
+1. Bump `version` in package.json and `RELEASE_VERSION.txt`, add a CHANGELOG entry, commit.
+2. `npm run dist`, zip exe + README.txt + CHANGELOG.md as `ModCommandX-v<version>.zip`;
+   optionally `node owner-tools/update-featured-authors/package-source-release.js` for a
+   binary-free `ModCommandX-Source-v<version>.zip`.
+3. `"Publish Release.bat" <version> <path-to-zip>` — creates tag/release `v<version>`
+   on EnvianMods/ModCommandX and uploads the zip. That **is** the announcement:
+   installed copies check `/releases/latest` hourly and show their update banner,
+   linking to that release page. (A missing or private repo is simply no banner.)
+4. Optionally `"Archive Release.bat" <version> <build-zip> <source-zip> --notes "..."`
+   — pushes the version archive to github.com/EnvianMods/ModCommandXArchive.
 
-The project is a git repo with `origin` set to
-`github.com/EnvianMods/ZeroCompanyModCommand`. Full release flow:
+The remaining owner tools (`publish-release.js`, `archive-release.js`,
+`push-handoff.js`) refuse the upstream targets (`EnvianMods/ZeroCompanyModCommand`,
+`…Archive`, `SWZeroCompanyFeaturedAuthors`) even when passed with `--repo`. The
+upstream tools that publish shared files (featured authors, GitHub allowlist, EA
+compat, launcher version) and upload to Nexus are not part of X.
 
-1. Bump `version` in package.json, add a CHANGELOG entry, commit
-2. `npm run dist`, zip exe + README.txt + CHANGELOG.md as
-   `ZeroCompanyModCommand-v<version>.zip`; snapshot the source (no
-   node_modules/release/data/.git) as `...-source-v<version>.zip`
-3. Upload the exe zip to Nexus as a new version of the existing main file:
-   `upload-nexus-file.js <public> <zip> --name "Zero Company Mod Command" --update
-   --archive-old --set-mod-version`; the Linux zip likewise with
-   `--name "Zero Company Mod Command (Linux AppImage)" --category optional
-   --no-primary --update --archive-old`. (Fallback while an exe is held by the
-   scan: `package-source-release.js` + the same upload with
-   `--name "Zero Company Mod Command (build from source)" --no-primary`.)
-4. `"Archive Release.bat" <version> <build-zip> <source-zip> --notes "..."`
-   — pushes the version archive (both zips as Release assets + synced changelog)
-   to github.com/EnvianMods/ZeroCompanyModCommandArchive. This replaces the old
-   local copy into "Envian Mods and Projects" (that folder is now legacy).
-5. `git push` the source, then optionally
-   `"Publish Release.bat" <version> <path-to-zip>` — silent GitHub mirror on the
-   source repo
-6. `"Update Launcher Version.bat" <version> "https://www.nexusmods.com/starwarszerocompany/mods/<id>?tab=files" --notes "..."`
-   — announces to every installed launcher, pointing at Nexus
-
-- **HANDOFF.md is never published.** The internal working notes are untracked in
-  the public repo (listed in `.gitignore`) so they cannot end up in a tag's
-  automatic "Source code (zip/tar.gz)" assets; they live in the private archive
-  repo at `docs/HANDOFF.md` on `main` and are pushed with
-  `owner-tools/update-featured-authors/push-handoff.js` / `"Push Handoff.bat"`
-  after every HANDOFF edit. As a backstop, `publish-release.js` lists each .zip
-  before uploading it and refuses any zip with an entry matching `/HANDOFF/i`
+- **HANDOFF.md is never published.** Internal working notes are untracked (listed in
+  `.gitignore`); `push-handoff.js` / `"Push Handoff.bat"` keeps a copy in the private
+  archive repo at `docs/HANDOFF.md`. As a backstop, `publish-release.js` lists each
+  .zip before uploading it and refuses any zip with an entry matching `/HANDOFF/i`
   (`node publish-release.js --check-only <zip>` runs that check alone).
 
 ## Third-party components in the shipped build
@@ -482,14 +487,12 @@ diff `out/` against the tagged commit; everything outside `node_modules/`
 should match, and `resources/tools/` should contain only the items above.
 The packaged `README.txt` comes from `build/README.txt` in this repository.
 
-## Owner tools (not shipped)
+## Shared, read-only rosters
 
-`owner-tools/update-featured-authors/` pushes `featured.json` to the
-`EnvianMods/SWZeroCompanyFeaturedAuthors` GitHub repo, which every installed launcher polls
-(`REMOTE_ROSTER_URL` in `lib/featured.js`). Editing the roster there updates the
-Featured Transmissions strip for all users live — no launcher update needed. Needs a
-GitHub token (env `GITHUB_TOKEN` or `token.txt` beside the script) with Contents
-write access to that repo. `--dry-run` previews, `--show` prints the published roster.
+X reads the same community files the upstream app does, and never writes them:
+`featured.json` (Featured Transmissions), `github-mods.json` (the curated GitHub tab),
+`ea-compat.json` and the `sdk` block of `launcher-version.json` from
+`EnvianMods/SWZeroCompanyFeaturedAuthors`, and the ZCSDK Runtime's `latest.json`.
 
 ## Ideas for later
 

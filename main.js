@@ -6,7 +6,7 @@ const { spawn } = require('child_process');
 
 // ------------------------------------------------- runtime integrity check
 // The portable exe unpacks the whole Electron runtime into
-// %TEMP%\ZeroCompanyModCommand (see package.json build.portable.unpackDirName)
+// %TEMP%\ModCommandX (see package.json build.portable.unpackDirName)
 // and runs it from there. Antivirus products have been seen quarantining files
 // straight out of that folder — ffmpeg.dll most often — which leaves the app
 // dead at launch or silently broken. Check the runtime DLLs before anything
@@ -45,10 +45,10 @@ function checkRuntimeFiles() {
     '  1. Restore the listed file(s) from your antivirus quarantine, and',
     '  2. Add the folder above to your antivirus exclusions (it keeps the same',
     '     name every launch, so one exclusion is enough), then',
-    '  3. Run Zero Company Mod Command again.',
+    '  3. Run Mod Command X again.',
   ].join('\n');
   try {
-    dialog.showErrorBox('Zero Company Mod Command — runtime files missing', message);
+    dialog.showErrorBox('Mod Command X — runtime files missing', message);
   } catch {
     // showErrorBox can throw on a headless/broken session; exiting is still right
   }
@@ -62,7 +62,6 @@ const { ModEngine, compareVersions, MODS_REL, LOGIC_MODS_REL, WIN64_REL, UE4SS_M
 const { findSevenZip, bundledSevenZip } = require('./lib/archive');
 const nexus = require('./lib/nexus');
 const nexusHttp = require('./lib/nexus-http');
-const oauth = require('./lib/nexus-oauth');
 const ue4ssDl = require('./lib/ue4ss');
 const zcsdkRt = require('./lib/zcsdk');
 const retocDl = require('./lib/retoc');
@@ -79,24 +78,24 @@ const report = require('./lib/report');
 const sdkLink = require('./lib/sdk-link');
 
 // App data (settings, staging, indexes) lives in the OS per-user app-data
-// folder — %APPDATA%\ZeroCompanyModCommand on Windows — never beside the exe.
+// folder — %APPDATA%\ModCommandX on Windows — never beside the exe.
 // (The mod ARCHIVE is separate: it lives in the game folder, see below.)
 // Running from source keeps using ./data so a dev checkout stays self-contained.
-const APPDATA_DIR_NAME = 'ZeroCompanyModCommand';
+//
+// Mod Command X installs side by side with the upstream Zero Company Mod
+// Command and shares NOTHING with it: its own data folder here, its own
+// Electron userData (%APPDATA%\Mod Command X, from package.json productName —
+// so its own single-instance lock and its own persist:nexus cookies) and its
+// own game-side archive. It deliberately does NOT migrate the upstream app's
+// %APPDATA%\ZeroCompanyModCommand or its older ZeroCompanyModCommand-data
+// folder; a user who wants those mods imports them explicitly (Settings ->
+// Import from a mod manager folder), which copies and never moves.
+const APPDATA_DIR_NAME = 'ModCommandX';
 
 function resolveDataDir() {
   if (process.env.ZC_DATA_DIR) return process.env.ZC_DATA_DIR; // test harness override
   if (!app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR) return path.join(__dirname, 'data');
-  const dir = path.join(app.getPath('appData'), APPDATA_DIR_NAME);
-  // A pre-1.9.0 data folder (next to the portable exe, or under userData) is
-  // moved into place once — copied, verified, then renamed aside as a backup.
-  const { migrateLegacyDataDir } = require('./lib/storage');
-  const legacy = [
-    process.env.PORTABLE_EXECUTABLE_DIR && path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'ZeroCompanyModCommand-data'),
-    path.join(app.getPath('userData'), 'data'),
-  ].filter(Boolean);
-  for (const old of legacy) if (migrateLegacyDataDir(old, dir)) break;
-  return dir;
+  return path.join(app.getPath('appData'), APPDATA_DIR_NAME);
 }
 
 const store = new Store(resolveDataDir());
@@ -105,7 +104,7 @@ let win = null;
 
 // ---------------------------------------------------------- mod archive location
 // The archive (library/backups/versions + a mirrored manifest) lives in the
-// GAME folder by default — <game>\ModCommandArchive — so mods survive app
+// GAME folder by default — <game>\ModCommandXArchive — so mods survive app
 // updates and deletions, and a fresh install can restore everything from it.
 // settings.storageDir overrides with a custom location.
 
@@ -121,36 +120,9 @@ function resolveStorageRoot() {
 function ensureStorage() {
   const desired = resolveStorageRoot();
   if (path.resolve(desired) === path.resolve(store.storageRoot)) return null;
-  // A pre-1.9.0 archive under the old folder name sits beside where the new
-  // one belongs: rename it in place (same volume, atomic, keeps everything
-  // including the mirrored manifest) rather than copying it entry by entry.
-  if (store.settings.gamePath && !store.settings.storageDir) {
-    const legacy = path.join(store.settings.gamePath, storageLib.LEGACY_ARCHIVE_DIR_NAME);
-    if (fs.existsSync(legacy)) {
-      // Files in the legacy folder other than its mirrored manifest.
-      const legacyContent = () => storageLib.countFilesRec(legacy) - (fs.existsSync(path.join(legacy, 'manager-data.json')) ? 1 : 0);
-      if (!fs.existsSync(desired)) {
-        try {
-          fs.renameSync(legacy, desired);
-          log('info', `mod archive renamed ${storageLib.LEGACY_ARCHIVE_DIR_NAME} -> ${storageLib.ARCHIVE_DIR_NAME}`);
-        } catch (err) {
-          log('warn', `could not rename the legacy archive folder (${err.message}); migrating entries instead`);
-          fs.mkdirSync(desired, { recursive: true });
-          storageLib.migrateStorage(legacy, desired);
-        }
-      } else if (legacyContent() === 0) {
-        // An older build ran after the rename and re-created an empty legacy
-        // folder (plus, at most, a stale mirror): drop it so nothing lingers.
-        try { fs.rmSync(legacy, { recursive: true, force: true }); log('info', `removed empty legacy archive folder ${storageLib.LEGACY_ARCHIVE_DIR_NAME}`); } catch (_) {}
-      } else {
-        // Both populated: merge the legacy entries in (never clobbering an
-        // entry that already exists under the new name), then drop the shell.
-        const res = storageLib.migrateStorage(legacy, desired);
-        log('info', `merged ${res.moved} entr(y/ies) from a re-created ${storageLib.LEGACY_ARCHIVE_DIR_NAME} into ${storageLib.ARCHIVE_DIR_NAME}`);
-        try { if (legacyContent() === 0) fs.rmSync(legacy, { recursive: true, force: true }); } catch (_) {}
-      }
-    }
-  }
+  // Only X's OWN archive is ever touched here. The upstream Mod Command's
+  // <game>\ModCommandArchive (and its pre-1.9.0 ZeroCompanyModArchive) belong
+  // to that app: X never renames, merges, prunes or deletes them.
   fs.mkdirSync(desired, { recursive: true });
   const res = storageLib.migrateStorage(store.storageRoot, desired);
   store.setStorageRoot(desired);
@@ -159,8 +131,11 @@ function ensureStorage() {
   return { root: desired, moved: res.moved };
 }
 
-// Fresh install + an archive already sitting in the game folder (or the custom
-// location): restore every mod, profile, and vault entry from it.
+// Fresh install + X's OWN archive already sitting in the game folder (or the
+// custom location): restore every mod, profile, and vault entry from it.
+// store.storageRoot is <game>\ModCommandXArchive (or storageDir), never the
+// upstream app's ModCommandArchive — X must not auto-import (and, with
+// pruneImported, empty) another app's archive.
 async function autoRestoreFromArchive() {
   if (store.mods.length) return null;
   const manifest = path.join(store.storageRoot, 'manager-data.json');
@@ -177,89 +152,69 @@ async function autoRestoreFromArchive() {
   return null;
 }
 
-// ---------------------------------------------------------- Nexus sign-in at rest
-// Nexus Mods' guidelines forbid third-party apps from collecting a user's own
-// credentials, so the app signs the user in with OAuth 2.0 (Authorization Code
-// + PKCE, see lib/nexus-oauth.js) and keeps only the tokens Nexus issues. They are
-// encrypted with the OS user's credentials (DPAPI on Windows) via Electron
-// safeStorage; plaintext is the fallback when the OS store is unavailable.
-// Tokens never reach the renderer and are never written to the log.
+// ---------------------------------------------------------- Nexus API key at rest
+// Mod Command X authenticates with the user's own personal Nexus Mods API key
+// (Settings -> Nexus Mods -> "Get my API key"). It is kept encrypted with the
+// OS user's credentials (DPAPI on Windows) via Electron safeStorage; plaintext
+// is only the fallback when the OS store is unavailable, and a plaintext key is
+// migrated to the encrypted form on startup. The key never reaches the
+// renderer, the log or a diagnostics report. A stored key is never deleted by
+// the app — only the user's own "Clear" removes it.
 
-const SIGN_IN_REQUIRED = 'Sign in to Nexus Mods in Settings first.';
-const SIGN_IN_EXPIRED = 'Your Nexus Mods sign-in expired or was revoked. Sign in again in Settings.';
-const REFRESH_MARGIN_MS = 60 * 1000; // refresh this long before the token lapses
+const KEY_REQUIRED = 'Add your Nexus Mods API key in Settings first.';
 
-let nexusTokens = null; // { access_token, refresh_token, expires_at, obtained_at }
-let nexusRefreshInFlight = null;
-let nexusSignInFlow = null;
-let legacyCredentialsDropped = false;
+// The decrypted key, held in memory so the many sync nexusSignedIn() gates
+// (fullState runs one per state push) do not each go through DPAPI.
+// undefined = not read yet; storeNexusKey/clear reset it.
+let nexusKeyCache;
 
-function loadNexusTokens() {
-  const s = store.settings;
-  let raw = null;
-  if (s.nexusOAuthEncrypted) {
-    try {
-      if (safeStorage.isEncryptionAvailable()) {
-        raw = safeStorage.decryptString(Buffer.from(s.nexusOAuthEncrypted, 'base64'));
-      }
-    } catch (_) { /* wrong OS user / corrupted blob — treat as signed out */ }
-    if (!raw) return null;
-  } else if (s.nexusOAuth) {
-    raw = s.nexusOAuth;
-  }
-  if (!raw) return null;
-  try {
-    const t = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return t && t.access_token ? t : null;
-  } catch (_) { return null; }
+function nexusKey() {
+  if (nexusKeyCache === undefined) nexusKeyCache = readNexusKey();
+  return nexusKeyCache;
 }
 
-function saveNexusTokens(tokens) {
-  if (tokens && safeStorage.isEncryptionAvailable()) {
-    store.settings.nexusOAuthEncrypted = safeStorage.encryptString(JSON.stringify(tokens)).toString('base64');
-    store.settings.nexusOAuth = null;
+function readNexusKey() {
+  const s = store.settings;
+  if (s.nexusApiKeyEncrypted) {
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        return safeStorage.decryptString(Buffer.from(s.nexusApiKeyEncrypted, 'base64'));
+      }
+    } catch (_) { /* wrong OS user / corrupted blob — treat as no key */ }
+    return null;
+  }
+  return s.nexusApiKey || null;
+}
+
+function storeNexusKey(key) {
+  nexusKeyCache = undefined;
+  if (key && safeStorage.isEncryptionAvailable()) {
+    store.settings.nexusApiKeyEncrypted = safeStorage.encryptString(key).toString('base64');
+    store.settings.nexusApiKey = null;
   } else {
-    store.settings.nexusOAuthEncrypted = null;
-    store.settings.nexusOAuth = tokens || null;
+    store.settings.nexusApiKeyEncrypted = null;
+    store.settings.nexusApiKey = key || null;
   }
   store.save();
 }
 
-// A token set fresh from the token endpoint. The access token's RS256 signature
-// is verified against Nexus's public key BEFORE anything it claims (the
-// username, the premium flag) is trusted or stored.
-function applyNexusTokens(fresh) {
-  const next = {
-    access_token: fresh.access_token,
-    // A refresh response may omit the refresh token — keep the one we have.
-    refresh_token: fresh.refresh_token || (nexusTokens && nexusTokens.refresh_token) || null,
-    expires_at: fresh.expires_at,
-    obtained_at: fresh.obtained_at,
-  };
-  const who = oauth.userFromToken(next.access_token); // throws on a token we cannot verify
-  nexusTokens = next;
-  saveNexusTokens(next);
-  nexusUser = {
-    name: who.name,
-    isPremium: who.isPremium,
-    // Until the account's own preferences come back, adult content is hidden.
-    adult: false, adultBlurImages: false, ageVerified: false,
-  };
-  // Every fresh token — sign-in and refresh alike — re-reads the account's
-  // content preferences, so a change made on nexusmods.com lands here.
-  refreshNexusPreferences().catch(() => {});
-  return next;
+function migrateNexusKey() {
+  const s = store.settings;
+  if (s.nexusApiKey && !s.nexusApiKeyEncrypted && safeStorage.isEncryptionAvailable()) {
+    storeNexusKey(s.nexusApiKey);
+  }
 }
 
 // --------------------------------------------------------- adult content
 //
 // THE one place that decides whether adult-tagged mods are listed. There is no
-// in-app opt-in and no way to reach them while signed out: the answer is the
-// signed-in account's own Nexus content preference, which Nexus itself gates
-// behind its age verification. This app never second-guesses it in the other
-// direction, and every listing path (browse, category, search, the featured
-// strip and its backfill, the Link wizard) is handed this answer rather than
-// deciding for itself.
+// in-app opt-in and no way to reach them without a key: the answer is the key
+// owner's own Nexus content preference (v2 GraphQL `preferences { adult }`,
+// read with the API key), which Nexus itself gates behind its age
+// verification. This app never second-guesses it in the other direction, and
+// every listing path (browse, category, search, the featured strip and its
+// backfill, the Link wizard) is handed this answer rather than deciding for
+// itself.
 function adultAllowed() {
   return !!(nexusSignedIn() && nexusUser && nexusUser.adult === true);
 }
@@ -296,135 +251,48 @@ async function refreshNexusPreferences() {
   return prefs;
 }
 
-function nexusSignOutLocal() {
-  nexusTokens = null;
-  nexusUser = null;
-  store.settings.nexusOAuth = null;
-  store.settings.nexusOAuthEncrypted = null;
-  store.save();
+// Validate a key against /users/validate.json (unless the caller just did),
+// then read the account's content preferences with it. Used on Save, on
+// "Verify" and once at startup.
+async function loadNexusUser(key, validated = null) {
+  const who = validated || await nexus.validateKey(key); // throws on a bad key
+  // Adult content stays hidden until the account's own preferences answer.
+  nexusUser = { name: who.name, isPremium: who.isPremium, adult: false, adultBlurImages: false, ageVerified: false };
+  await refreshNexusPreferences();
+  return nexusUser;
 }
 
-// Sync "have we got credentials?" — the presence check every feature gate uses.
+// Compatibility shims — the ~25 call sites that gate features and fetch the
+// credential keep the names they had in the upstream OAuth build:
+//   nexusSignedIn()      sync "have we got a key?"
+//   nexusAccessToken()   the key itself (async), or throws KEY_REQUIRED
+//   withNexusToken(fn)   one call with the key; a key cannot be refreshed, so a
+//                        401 simply surfaces "rejected the API key"
 function nexusSignedIn() {
-  return !!(nexusTokens && nexusTokens.access_token);
+  return !!nexusKey();
 }
 
-async function refreshNexusTokens() {
-  if (nexusRefreshInFlight) return nexusRefreshInFlight;
-  nexusRefreshInFlight = (async () => {
-    if (!nexusTokens || !nexusTokens.refresh_token) {
-      nexusSignOutLocal();
-      throw new Error(SIGN_IN_EXPIRED);
-    }
-    let fresh;
-    try {
-      fresh = await oauth.refreshTokens(nexusTokens.refresh_token);
-    } catch (err) {
-      // A 4xx means the grant is gone — the user revoked the app on their
-      // Nexus account page, or the refresh token lapsed. That is a sign-out.
-      if (err && err.revoked) {
-        log('info', 'nexus sign-in: the refresh grant was refused — signed out');
-        nexusSignOutLocal();
-        sendEvent({ type: 'state', state: fullState() });
-        throw new Error(SIGN_IN_EXPIRED);
-      }
-      throw err;
-    }
-    log('info', 'nexus sign-in: access token refreshed');
-    return applyNexusTokens(fresh);
-  })();
-  const flow = nexusRefreshInFlight;
-  flow.catch(() => {}).then(() => { if (nexusRefreshInFlight === flow) nexusRefreshInFlight = null; });
-  return flow;
-}
-
-// The async counterpart to nexusSignedIn(): a usable access token, refreshed
-// proactively when the current one is about to lapse.
 async function nexusAccessToken() {
-  if (!nexusSignedIn()) throw new Error(SIGN_IN_REQUIRED);
-  if (nexusTokens.expires_at && Date.now() >= nexusTokens.expires_at - REFRESH_MARGIN_MS) {
-    await refreshNexusTokens();
-  }
-  return nexusTokens.access_token;
+  const key = nexusKey();
+  if (!key) throw new Error(KEY_REQUIRED);
+  return key;
 }
 
-// One Nexus API call with a live token; a 401 buys exactly one refresh + retry.
 async function withNexusToken(fn) {
-  const token = await nexusAccessToken();
-  try {
-    return await fn(token);
-  } catch (err) {
-    if (!err || !err.nexusUnauthorized) throw err;
-    const fresh = await refreshNexusTokens();
-    return fn(fresh.access_token);
-  }
-}
-
-// Settings that builds before the OAuth sign-in wrote: the user's own stored
-// Nexus credential, plaintext and OS-encrypted. Names only — nothing in this
-// app reads, sends or migrates them; they exist here solely so the values can
-// be deleted off disk. Spelled through a shared prefix so a search of the
-// source for the old credential name finds no live use anywhere.
-const LEGACY_NEXUS_PREFIX = 'nexusApi';
-const LEGACY_NEXUS_SETTING_KEYS = [`${LEGACY_NEXUS_PREFIX}Key`, `${LEGACY_NEXUS_PREFIX}KeyEncrypted`];
-
-// Startup: a credential left behind by an older build is DROPPED, never
-// migrated and never used. The renderer is told once, so a user whose
-// downloads suddenly ask for a sign-in learns why.
-function dropLegacyNexusCredentials() {
-  const s = store.settings;
-  const had = LEGACY_NEXUS_SETTING_KEYS.some((k) => !!s[k]);
-  let present = false;
-  for (const k of LEGACY_NEXUS_SETTING_KEYS) {
-    if (k in s) { present = true; delete s[k]; }
-  }
-  if (present) store.save();
-  if (had) log('info', 'dropped a Nexus credential left by an older build — the app signs in with OAuth now');
-  return had;
+  return fn(await nexusAccessToken());
 }
 
 function initNexusAuth() {
-  legacyCredentialsDropped = dropLegacyNexusCredentials();
-  nexusTokens = loadNexusTokens();
-  if (!nexusTokens) return;
-  // Name and premium status come from the token itself (expiry is ignored here:
-  // a lapsed token is still proof of who signed in, and the next API call
-  // refreshes it). A token we cannot verify is refused outright.
-  try {
-    const who = oauth.userFromToken(nexusTokens.access_token, { ignoreExpiry: true });
-    // Adult content stays hidden until the account's own preferences answer.
-    nexusUser = { name: who.name, isPremium: who.isPremium, adult: false, adultBlurImages: false, ageVerified: false };
-    refreshNexusPreferences().catch(() => {});
-  } catch (err) {
-    log('error', `stored Nexus access token failed verification (${err.message}) — signed out`);
-    nexusSignOutLocal();
-  }
-}
-
-// The whole browser round trip: listen on loopback, open the authorization page
-// in the system browser, wait for the callback, swap the code for tokens. A
-// second call while one is pending joins the pending flow.
-function nexusSignIn() {
-  if (nexusSignInFlow) return nexusSignInFlow;
-  const flow = (async () => {
-    const verifier = oauth.makeVerifier();
-    const state = oauth.randomState();
-    const server = await oauth.startCallbackServer({ state });
-    try {
-      const url = oauth.buildAuthorizeUrl({ state, codeChallenge: oauth.challengeFor(verifier) });
-      log('info', `nexus sign-in: listening on ${server.redirectUri}, opening the authorization page in the browser`);
-      await shell.openExternal(url);
-      const { code } = await server.result;
-      applyNexusTokens(await oauth.exchangeCode({ code, codeVerifier: verifier }));
-      log('info', `nexus sign-in: signed in as ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}`);
-      return fullState();
-    } finally {
-      server.close();
-    }
-  })();
-  nexusSignInFlow = flow;
-  flow.catch(() => {}).then(() => { if (nexusSignInFlow === flow) nexusSignInFlow = null; });
-  return flow;
+  try { migrateNexusKey(); } catch (_) {}
+  const key = nexusKey();
+  if (!key) return;
+  // Who the key belongs to (name, premium) comes from validate.json. Offline or
+  // a rejected key just leaves nexusUser empty — the key is KEPT either way;
+  // the next call that needs the user retries, and Settings shows the error.
+  loadNexusUser(key).then((u) => {
+    log('info', `nexus: API key belongs to ${u.name}${u.isPremium ? ' (premium)' : ''}`);
+    try { sendEvent({ type: 'state', state: fullState() }); } catch (_) {}
+  }).catch((err) => log('info', `nexus: stored API key could not be validated at startup (${err.message})`));
 }
 
 // ---------------------------------------------------------- single instance / nxm
@@ -740,7 +608,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#05080f',
     autoHideMenuBar: true,
-    title: 'Zero Company Mod Command',
+    title: 'Mod Command X',
     icon: path.join(__dirname, 'src', 'assets', 'app-icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -761,12 +629,17 @@ function createWindow() {
   sdkLink.configure({
     window: win,
     appDir: __dirname,
-    // package.json, not app.getVersion(): the manifest's minModCommand is
-    // checked against MOD COMMAND's version, and app.getVersion() reports
-    // Electron's own when the app is started from a script rather than a
-    // folder (which is exactly what the verification harness does).
+    // The SDK manifest's minModCommand speaks the UPSTREAM Mod Command's
+    // version line (1.9.x). X restarted its own numbering at 1.0.0 but carries
+    // the upstream feature set it forked from, recorded in package.json as
+    // modCommandCompat — so that, not X's own version, is what an SDK is
+    // checked against. (package.json, not app.getVersion(): the latter reports
+    // Electron's own when the app is started from a script.)
     hostVersion: (() => {
-      try { return require('./package.json').version; } catch (_) { return app.getVersion(); }
+      try {
+        const pkg = require('./package.json');
+        return pkg.modCommandCompat || pkg.version;
+      } catch (_) { return app.getVersion(); }
     })(),
     log,
     getGamePath: () => store.settings.gamePath || null,
@@ -838,9 +711,9 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   log('info', `app start v${app.getVersion()} on ${process.platform} ${require('os').release()}`);
-  // Load the stored OAuth tokens — and throw away any credential an older
-  // build left behind.
-  try { initNexusAuth(); } catch (err) { log('error', `Nexus sign-in state could not be read: ${err.message}`); }
+  // Load the stored Nexus API key (migrating a plaintext one to the OS store)
+  // and look up who it belongs to in the background.
+  try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
   // Archive lives in the game folder (or the custom location) — migrate any
   // app-side content there, then restore from it when this store is fresh.
   try { ensureStorage(); } catch (err) { log('error', `archive setup failed: ${err.message}`); }
@@ -859,15 +732,6 @@ app.whenReady().then(() => {
     }
   }
   createWindow();
-  // One-time explanation for anyone upgrading from a build that stored a
-  // credential of its own.
-  if (legacyCredentialsDropped) {
-    win.webContents.once('did-finish-load', () => sendEvent({
-      type: 'toast',
-      kind: 'warn',
-      message: 'Nexus Mods sign-in has changed. Sign in with your Nexus account in Settings to restore downloads and update checks.',
-    }));
-  }
   // Handle an nxm:// link this instance was launched with.
   const url = nxmFromArgv(process.argv);
   if (url) win.webContents.once('did-finish-load', () => handleNxm(url));
@@ -982,10 +846,10 @@ app.whenReady().then(() => {
   setInterval(() => { if (win && !win.isDestroyed()) maybeCheckSdkUpdate(); }, UPDATE_CHECK_MS);
 });
 
-// WHERE TO GET THE SDK. Mod Command hard-codes no destination: the operator
-// publishes one in the asset repo's launcher-version.json `sdk` block, which
-// is the same file that announces Mod Command's own updates, so BOTH downloads
-// flip from GitHub to Nexus at launch by editing one published file.
+// WHERE TO GET THE SDK. Mod Command X hard-codes no destination: the upstream
+// operator publishes one in the shared asset repo's launcher-version.json
+// `sdk` block. X reads ONLY that block from it — X's own updates come from its
+// own GitHub releases (lib/launcher-update.js), never from that file.
 //
 // Two sources, in order, and the answer says which it used:
 //   'asset-file' — the check that ran this session carried a block
@@ -1074,7 +938,7 @@ app.on('window-all-closed', () => app.quit());
 
 // ------------------------------------------------------------------ helpers
 
-// { name, isPremium } from the verified access token (or /users/validate.json),
+// { name, isPremium } from /users/validate.json for the stored API key,
 // plus { adult, adultBlurImages, ageVerified } from the account's own Nexus
 // content preferences. adult/adultBlurImages reach the renderer in
 // fullState().nexus.user; the policy itself lives in adultAllowed().
@@ -1103,15 +967,18 @@ function fullState() {
   const modCompat = {};
   for (const m of store.mods) modCompat[m.id] = ea.evaluateMod(m, compat);
   return {
-    // Tokens NEVER cross into the renderer — only whether we have them.
-    settings: { ...store.settings, nexusOAuth: undefined, nexusOAuthEncrypted: undefined },
+    // The API key NEVER crosses into the renderer — only whether we have one.
+    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined, hasNexusKey: nexusSignedIn() },
     profiles: store.profiles,
     lastOrderBackup: store.data.lastOrderBackup
       ? { at: store.data.lastOrderBackup.at }
       : null,
     nexus: {
-      signedIn: nexusSignedIn(),
-      tokensEncrypted: !!store.settings.nexusOAuthEncrypted,
+      hasKey: nexusSignedIn(),
+      keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
+      // Premium drives the premium-vs-free download split; it is only known
+      // once validate.json has answered for the stored key.
+      premium: !!(nexusUser && nexusUser.isPremium),
       user: nexusUser ? {
         name: nexusUser.name,
         isPremium: !!nexusUser.isPremium,
@@ -1373,7 +1240,7 @@ function authorFromName(name) {
   return m ? m[1].trim() : null;
 }
 // Does any of this Nexus mod's files stem-match the local name? Best-effort
-// (v1 filesList needs a sign-in; any failure = no match); memoised per run so the
+// (v1 filesList needs an API key; any failure = no match); memoised per run so the
 // same mod is never fetched twice while one scan/search is underway.
 async function modHasMatchingFile(modId, localName, cache) {
   if (!nexusSignedIn()) return false;
@@ -1408,7 +1275,7 @@ function detectManagerSources() {
   // The app-side data folder, when the archive has moved to the game folder.
   if (path.resolve(store.dataDir) !== path.resolve(store.storageRoot)
     && fs.existsSync(path.join(store.dataDir, 'library'))) {
-    consider(store.dataDir, 'Previous Mod Command data (app folder)');
+    consider(store.dataDir, 'Previous Mod Command X data (app folder)');
   }
   const la = process.env.LOCALAPPDATA;
   if (la) {
@@ -1457,6 +1324,11 @@ const handlers = {
 
   'save-settings': async (_e, patch) => {
     delete patch.promotedAuthors; // owner-controlled (lib/featured.js), not a user setting
+    // The API key only changes through set-nexus-key / clear-nexus-key (which
+    // validate and encrypt it); a settings patch can never write or blank it.
+    delete patch.nexusApiKey;
+    delete patch.nexusApiKeyEncrypted;
+    delete patch.hasNexusKey;
     Object.assign(store.settings, patch);
     store.save();
     return fullState();
@@ -1618,30 +1490,38 @@ const handlers = {
   },
   'delete-profile': async (_e, { id }) => { engine.deleteProfile(id); return fullState(); },
 
-  // OAuth sign-in: opens nexusmods.com in the user's own browser and waits for
-  // the loopback callback. The app never sees the password, only the tokens.
-  'nexus-sign-in': async () => nexusSignIn(),
-
-  'nexus-sign-out': async () => {
-    const tokens = nexusTokens;
-    nexusSignOutLocal();
-    if (tokens) {
-      // Best-effort — a revoke that fails must never leave the user signed in here.
-      try { await oauth.revoke(tokens.refresh_token); } catch (_) {}
-      try { await oauth.revoke(tokens.access_token); } catch (_) {}
-    }
-    log('info', 'nexus sign-in: signed out (tokens cleared and revocation requested)');
+  // Save a personal API key: trimmed, proven against /users/validate.json, and
+  // only THEN stored — a key Nexus refuses is never written to disk.
+  'set-nexus-key': async (_e, { key } = {}) => {
+    const trimmed = String(key || '').trim();
+    if (!trimmed) throw new Error('The API key is empty.');
+    const who = await nexus.validateKey(trimmed); // throws "rejected the API key" on a bad one
+    storeNexusKey(trimmed);
+    await loadNexusUser(trimmed, who);
+    promotedCache.mods = null; // the adult answer may have changed
+    log('info', `nexus: API key saved for ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}${store.settings.nexusApiKeyEncrypted ? ' (encrypted)' : ' (plaintext — OS store unavailable)'}`);
+    return fullState();
+  },
+  // The user's own "Clear" — the only way a stored key is ever removed.
+  'clear-nexus-key': async () => {
+    storeNexusKey(null);
+    nexusUser = null;
+    promotedCache.mods = null;
+    log('info', 'nexus: API key cleared');
+    return fullState();
+  },
+  'validate-nexus-key': async () => {
+    await loadNexusUser(await nexusAccessToken());
     return fullState();
   },
 
   // What Nexus's rate-limit headers last reported, for Settings.
   'nexus-quota': async () => compactQuota(),
 
-  // "Verify": ask the API itself who this token belongs to, and re-read the
+  // "Verify": ask the API itself who this key belongs to, and re-read the
   // account's content preferences while we are there.
   'nexus-refresh-user': async () => {
-    mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t)));
-    await refreshNexusPreferences();
+    await loadNexusUser(await nexusAccessToken());
     return fullState();
   },
   'register-nxm': async () => {
@@ -1653,12 +1533,12 @@ const handlers = {
       fs.mkdirSync(appsDir, { recursive: true });
       const target = process.env.APPIMAGE || exe;
       const desktop = [
-        '[Desktop Entry]', 'Type=Application', 'Name=Zero Company Mod Command',
+        '[Desktop Entry]', 'Type=Application', 'Name=Mod Command X',
         `Exec="${target}" %u`, 'Terminal=false', 'NoDisplay=true',
         'MimeType=x-scheme-handler/nxm;', '',
       ].join('\n');
-      fs.writeFileSync(path.join(appsDir, 'zero-company-mod-command.desktop'), desktop);
-      try { execFileSync('xdg-mime', ['default', 'zero-company-mod-command.desktop', 'x-scheme-handler/nxm'], { stdio: 'ignore' }); } catch (_) {}
+      fs.writeFileSync(path.join(appsDir, 'mod-command-x.desktop'), desktop);
+      try { execFileSync('xdg-mime', ['default', 'mod-command-x.desktop', 'x-scheme-handler/nxm'], { stdio: 'ignore' }); } catch (_) {}
       try { execFileSync('update-desktop-database', [appsDir], { stdio: 'ignore' }); } catch (_) {}
       app.setAsDefaultProtocolClient('nxm');
       return fullState();
@@ -1673,12 +1553,12 @@ const handlers = {
         ['add', key, ...(value ? ['/v', value] : ['/ve']), '/d', data, '/f'], { stdio: 'ignore' });
       // Browser "Open …?" dialogs pull the name from these (which one varies by
       // browser/version) or from the exe's FileDescription.
-      set('HKCU\\Software\\Classes\\nxm', null, 'URL:Mod Command Link');
-      set('HKCU\\Software\\Classes\\nxm', 'FriendlyTypeName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\shell\\open', 'FriendlyAppName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\shell\\open\\command', 'FriendlyAppName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationDescription', 'Zero Company Mod Command');
+      set('HKCU\\Software\\Classes\\nxm', null, 'URL:Mod Command X Link');
+      set('HKCU\\Software\\Classes\\nxm', 'FriendlyTypeName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\shell\\open', 'FriendlyAppName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\shell\\open\\command', 'FriendlyAppName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationDescription', 'Mod Command X');
     } catch (_) { /* cosmetic only */ }
     return fullState();
   },
@@ -1689,20 +1569,20 @@ const handlers = {
   },
 
   'nexus-browse': async (_e, opts) => {
-    // Browsing itself needs no sign-in. Whether adult-tagged mods are in the
+    // Browsing itself needs no API key. Whether adult-tagged mods are in the
     // listing is NEVER the renderer's call: adultAllowed() decides, and any
     // includeAdult that arrived from the renderer is discarded here.
     const result = await nexus.browseMods({ ...(opts || {}), includeAdult: adultAllowed() });
     // Premium accounts can pull download links straight from the API.
     if (nexusSignedIn() && !nexusUser) {
-      try { mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t))); } catch (_) {}
+      try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {}
     }
     return { ...result, signedIn: nexusSignedIn(), isPremium: !!(nexusUser && nexusUser.isPremium) };
   },
 
   'nexus-promoted': async () => {
     // Session cache — the featured pool rarely changes. It is also keyed on
-    // the adult answer, so signing in or out never serves a stale mix.
+    // the adult answer, so saving or clearing the key never serves a stale mix.
     const now = Date.now();
     const adult = adultAllowed();
     if (promotedCache.mods && promotedCache.adult === adult && now - promotedCache.at < 5 * 60 * 1000) return promotedCache;
@@ -1724,7 +1604,7 @@ const handlers = {
   'nexus-install-remote': async (_e, { modId, name }) => {
     const token = await nexusAccessToken();
     if (!nexusUser) {
-      try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); }
+      try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); }
     }
     if (!nexusUser.isPremium) {
       // Nexus policy: non-premium downloads must start on the website. Rather
@@ -1906,13 +1786,13 @@ const handlers = {
         sizeKb: f.size_kb || f.size || 0,
         uploaded: f.uploaded_timestamp ? new Date(f.uploaded_timestamp * 1000).toISOString() : null,
       }));
-    if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (_) {} }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (_) {} }
     return { files: usable, isPremium: !!(nexusUser && nexusUser.isPremium) };
   },
 
   'nexus-install-file': async (_e, { modId, fileId, name }) => {
     const token = await nexusAccessToken();
-    if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); } }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
     if (!nexusUser.isPremium) {
       // Free accounts: the website mints the link. Open the mod's Files page in
       // the embedded Nexus panel; the nxm handoff installs the file the user
@@ -1988,7 +1868,7 @@ const handlers = {
         description: plainText(f.description),
         installedAs: installedAs(f.file_id),
       }));
-    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (_) {} }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (_) {} }
     return {
       mod: { name: modName || (parent ? parent.name : `mod ${modId}`) },
       parentId: parent ? parent.id : null,
@@ -2003,7 +1883,7 @@ const handlers = {
   // handleNxm (same planNexusInstall rules).
   'nexus-install-optional': async (_e, { modId, fileId, parentId }) => {
     const token = await nexusAccessToken();
-    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (err) { throw new Error(err.message); } }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
     const parentMod = parentId ? store.getMod(parentId) : null;
     if (!nexusUser.isPremium) {
       return {
@@ -2065,7 +1945,7 @@ const handlers = {
   // themselves can be grouped under another installed mod, and from then on it
   // looks and behaves exactly like an optional file off a mod page: nested row,
   // own switch, off when the parent is off, gone when the parent is uninstalled.
-  // Purely local bookkeeping — no Nexus call, no sign-in.
+  // Purely local bookkeeping — no Nexus call, no API key.
 
   // Which installed mods may be grouped under this one.
   'groupable-mods': async (_e, { parentId }) => {
@@ -2154,7 +2034,7 @@ const handlers = {
       suggestions.push({ id: m.id, name: m.name, modType: m.modType, candidates: candidates.slice(0, 5) });
     }
     const withCands = suggestions.filter((s) => s.candidates.length).length;
-    log('info', `link-mods: ${withCands}/${total} unlinked mod(s) have candidate source(s)${signedIn ? '' : ' (signed out — linking needs a Nexus sign-in)'}`);
+    log('info', `link-mods: ${withCands}/${total} unlinked mod(s) have candidate source(s)${signedIn ? '' : ' (no API key — linking needs a Nexus API key)'}`);
     return { checked: total, signedIn, suggestions, state: fullState() };
   },
 
@@ -2333,8 +2213,8 @@ const handlers = {
   //
   // Default result, by account: premium → downloaded and installed here; free →
   // { opened:'embed', url, name, hint } for the embedded Nexus page (its "Mod
-  // Manager Download" comes back as nxm:// into handleNxm); signed out →
-  // { needsChoice, nexus, github } so the renderer can offer the sign-in or the
+  // Manager Download" comes back as nxm:// into handleNxm); no API key →
+  // { needsChoice, nexus, github } so the renderer can offer adding a key or the
   // stock build.
   'install-ue4ss': async (_e, payload) => {
     if (!store.settings.gamePath) throw new Error('Locate the game folder in Settings first.');
@@ -2360,7 +2240,7 @@ const handlers = {
       // the disk, but the user is told exactly what they are getting.
       sendEvent({
         type: 'toast', kind: 'warn',
-        message: 'The Nexus page for “UE4SS for Star Wars Zero Company” could not be read, so Mod Command is installing the stock upstream build from GitHub instead — it has no Zero Company signatures and may not work after a game patch.',
+        message: 'The Nexus page for “UE4SS for Star Wars Zero Company” could not be read, so Mod Command X is installing the stock upstream build from GitHub instead — it has no Zero Company signatures and may not work after a game patch.',
       });
     }
     const asset = tag ? await ue4ssDl.runtimeByTag(tag) : await ue4ssDl.latestRuntime();
@@ -2400,7 +2280,7 @@ const handlers = {
     const latest = releases.find((r) => r.recommended) || null;
     const [, nexusLatest] = await Promise.all([latest ? ue4ssDl.refreshLatest(true) : null, ue4ssDl.refreshNexusLatest(true)]);
     const signedIn = nexusSignedIn();
-    if (signedIn && !nexusUser) { try { mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t))); } catch (_) {} }
+    if (signedIn && !nexusUser) { try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {} }
     const det = steam.detectGame(store.settings.gamePath);
     return {
       releases, releasesError, installed, status: engine.ue4ssStatus(), vault: engine.ue4ssListVault(),
@@ -2513,13 +2393,13 @@ function spawnGameExe(detection) {
 // Premium: direct download. Free: the embedded Nexus page — its Mod Manager
 // Download button hands the file to handleNxm, which recognises the runtime.
 async function installUe4ssFromNexus(fileId) {
-  if (!nexusSignedIn()) throw new Error('Sign in to Nexus Mods in Settings first, or install the GitHub build.');
+  if (!nexusSignedIn()) throw new Error('Add your Nexus Mods API key in Settings first, or install the GitHub build.');
   const token = await nexusAccessToken();
-  if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); } }
+  if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
   if (!nexusUser.isPremium) {
     return {
       opened: 'embed', url: ue4ssDl.NEXUS_URL, name: 'UE4SS for Star Wars Zero Company',
-      hint: 'Press Mod Manager Download on the file list and Mod Command installs it.',
+      hint: 'Press Mod Manager Download on the file list and Mod Command X installs it.',
     };
   }
   const files = await nexus.filesList(ue4ssDl.NEXUS_MOD_ID, token);
@@ -2703,7 +2583,7 @@ function diagnostics() {
         } else {
           add(unmanaged.length ? 'info' : 'good', 'Mods folder (plugins)',
             `Present with ${folders.length} plugin folder${folders.length === 1 ? '' : 's'}: ` +
-            `${managed.length} managed by Mod Command, ${unmanaged.length} unmanaged` +
+            `${managed.length} managed by Mod Command X, ${unmanaged.length} unmanaged` +
             (unmanaged.length ? ` (${unmanaged.join(', ')}) — Hangar Bay → Import can adopt them so enable/disable, updates and removal are handled here.` : '.'));
         }
       }
@@ -2757,7 +2637,7 @@ function diagnostics() {
       else if (u.latest) tail += ' Current.';
       if (!fromNexus) tail += ' The Zero Company package on Nexus is the tested one — Settings → UE4SS.';
     } else if (ue4ss.installed) {
-      tail = ' Build unknown (not installed by Mod Command) — reinstall from Settings → UE4SS to get the Zero Company package from Nexus.';
+      tail = ' Build unknown (not installed by Mod Command X) — reinstall from Settings → UE4SS to get the Zero Company package from Nexus.';
     }
     add(u.available ? 'warning' : (ue4ss.healthy ? 'good' : (ue4ss.installed ? 'warning' : 'info')), 'UE4SS runtime', ue4ss.message + tail);
   }
@@ -2776,7 +2656,7 @@ function diagnostics() {
   {
     const sz = findSevenZip(store.settings.sevenZipPath);
     add(sz ? 'good' : 'info', '7-Zip',
-      sz ? `Available for .7z/.rar archives (${sz === bundledSevenZip() ? 'bundled with Mod Command' : sz})` : 'Not found — only .zip archives can be installed.');
+      sz ? `Available for .7z/.rar archives (${sz === bundledSevenZip() ? 'bundled with Mod Command X' : sz})` : 'Not found — only .zip archives can be installed.');
   }
   const missing = store.settings.gamePath ? engine.auditDeployedFiles() : [];
   if (missing.length) {
@@ -2835,9 +2715,10 @@ function buildSupportReport() {
     generatedAt: new Date().toISOString(),
     detection,
     eaAppPresent: eaAppDetected,
-    settings: store.settings,
-    nexusSignedIn: nexusSignedIn(),
-    nexusTokensEncrypted: !!store.settings.nexusOAuthEncrypted,
+    // The key itself never enters the report — not even encrypted.
+    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined },
+    hasNexusKey: nexusSignedIn(),
+    keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
     mods: store.mods,
     modCompat,
     conflicts,
@@ -2860,7 +2741,7 @@ handlers['support-report'] = async () => ({ text: buildSupportReport() });
 handlers['save-support-report'] = async () => {
   const res = await dialog.showSaveDialog(win, {
     title: 'Save support report',
-    defaultPath: `ZeroCompanyModCommand-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    defaultPath: `ModCommandX-report-${new Date().toISOString().slice(0, 10)}.txt`,
     filters: [{ name: 'Text report', extensions: ['txt'] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };

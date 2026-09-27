@@ -1,8 +1,9 @@
 {
-  "name": "zero-company-mod-command",
-  "productName": "Zero Company Mod Command",
-  "version": "1.9.14",
-  "description": "Mod Command",
+  "name": "mod-command-x",
+  "productName": "Mod Command X",
+  "version": "1.0.0",
+  "modCommandCompat": "1.9.14",
+  "description": "Mod Command X — a private side-by-side build of Zero Company Mod Command",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -21,8 +22,8 @@
     "extract-zip": "^2.0.1"
   },
   "build": {
-    "appId": "com.zerocompany.modcommand",
-    "productName": "Zero Company Mod Command",
+    "appId": "com.zerocompany.modcommandx",
+    "productName": "Mod Command X",
     "directories": {
       "output": "release"
     },
@@ -47,17 +48,17 @@
       "signAndEditExecutable": false
     },
     "portable": {
-      "artifactName": "ZeroCompanyModCommand.exe",
-      "unpackDirName": "ZeroCompanyModCommand"
+      "artifactName": "ModCommandX.exe",
+      "unpackDirName": "ModCommandX"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
       "icon": "build/icon.png",
-      "artifactName": "ZeroCompanyModCommand.AppImage",
+      "artifactName": "ModCommandX.AppImage",
       "category": "Utility",
-      "executableName": "zero-company-mod-command"
+      "executableName": "mod-command-x"
     }
   }
 }

@@ -27,8 +27,8 @@ jobs:
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ZeroCompanyModCommand-AppImage
-          path: release/ZeroCompanyModCommand.AppImage
+          name: ModCommandX-AppImage
+          path: release/ModCommandX.AppImage
           if-no-files-found: error
       # On a version tag, attach the AppImage to that tag's GitHub release.
       # CI usually finishes before the local release flow creates the release,
@@ -39,6 +39,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${GITHUB_REF_NAME}" release/ZeroCompanyModCommand.AppImage --clobber || \
-            gh release create "${GITHUB_REF_NAME}" release/ZeroCompanyModCommand.AppImage \
+          gh release upload "${GITHUB_REF_NAME}" release/ModCommandX.AppImage --clobber || \
+            gh release create "${GITHUB_REF_NAME}" release/ModCommandX.AppImage \
               --title "${GITHUB_REF_NAME}" --notes "Automated Linux AppImage build. The Windows zip and release notes follow from the local release flow."

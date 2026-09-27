@@ -482,7 +482,7 @@ function renderMods() {
     // Nexus page offers (alternative textures, patches, hotfixes) AND any mod
     // already installed that the user wants grouped under this one. Both end up
     // as the same thing: a switchable entry nested under this row. So the button
-    // is on every mod, linked or not, signed in or not.
+    // is on every mod, linked or not, with an API key or not.
     {
       const optBtn = document.createElement('button');
       optBtn.className = 'btn ghost tiny';
@@ -1235,19 +1235,18 @@ function renderSettings() {
   renderProfiles();
   // Nexus
   const nx = state.nexus || {};
-  const atRest = nx.tokensEncrypted ? ' · tokens encrypted at rest' : '';
-  $('#nexus-status').textContent = nx.signedIn
+  const keyStorage = nx.keyEncrypted ? ' · encrypted at rest' : '';
+  $('#nexus-status').textContent = nx.hasKey
     ? (nx.user
-      ? `Signed in as ${nx.user.name} · ${nx.user.isPremium ? 'Premium' : 'Free'} member${atRest}`
-      : `Signed in${atRest}`)
-    : 'Not signed in';
-  $('#btn-nexus-signin').classList.toggle('hidden', !!nx.signedIn);
-  $('#btn-nexus-verify').classList.toggle('hidden', !nx.signedIn);
-  $('#btn-nexus-signout').classList.toggle('hidden', !nx.signedIn);
+      ? `Key valid — ${nx.user.name} · ${nx.user.isPremium ? 'Premium' : 'Free'} member${keyStorage}`
+      : `Key stored${keyStorage} — press Verify to check it`)
+    : 'No key stored';
+  $('#btn-nexus-verify').classList.toggle('hidden', !nx.hasKey);
+  $('#btn-nexus-clear').classList.toggle('hidden', !nx.hasKey);
   // Read-only: this app has no adult-content switch of its own. It reports
-  // what the signed-in Nexus account says and points at the page to change it.
-  $('#nexus-adult').textContent = !nx.signedIn
-    ? 'hidden — sign in and enable it in your Nexus account preferences to see it here'
+  // what the API key's Nexus account says and points at the page to change it.
+  $('#nexus-adult').textContent = !nx.hasKey
+    ? 'hidden — add your API key and enable it in your Nexus account preferences to see it here'
     : (nx.adultAllowed ? 'shown (your Nexus account preference)' : 'hidden');
   // What Nexus's own rate-limit headers last reported. The hourly reset is
   // shown in local time (it is a wall-clock "come back at" for the user); the
@@ -1275,7 +1274,7 @@ function renderSettings() {
     if (ue4ssUp.available) ue4ssTail += ` NEWER ${fromNexus ? 'NEXUS ' : ''}BUILD AVAILABLE: ${ue4ssUp.latestBuild} from ${fmtDate(ue4ssUp.latestDate)}.`;
     else if (ue4ssUp.latest) ue4ssTail += ' Up to date.';
   } else if (state.ue4ss.installed) {
-    ue4ssTail = ' Build unknown (not installed by Mod Command) — Download & install to get the Zero Company package from Nexus.';
+    ue4ssTail = ' Build unknown (not installed by Mod Command X) — Download & install to get the Zero Company package from Nexus.';
   } else {
     ue4ssTail = ' Download & install fetches “UE4SS for Star Wars Zero Company” from Nexus Mods — stock UE4SS plus this game’s signatures, loader settings and helpers.';
   }
@@ -1332,7 +1331,7 @@ function renderSettings() {
     up.classList.toggle('primary', !!ru.available);
   }
   $('#set-7z-path').textContent = state.settings.sevenZipPath
-    || (state.sevenZipBundled ? 'Bundled with Mod Command (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
+    || (state.sevenZipBundled ? 'Bundled with Mod Command X (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
   $('#chk-close-on-launch').checked = !!state.settings.closeOnLaunch;
   $('#chk-reduced-motion').checked = !!state.settings.reducedMotion;
   // Game update freeze
@@ -1421,37 +1420,42 @@ $('#btn-browse-7z').addEventListener('click', async () => {
   const data = await call('browseToolPath', { key: 'sevenZipPath', title: 'Locate 7z.exe', filterName: '7-Zip' });
   if (data) { state = data; render(); }
 });
-// Sign-in runs in the user's own browser; the app just waits for the callback.
-async function runNexusSignIn(btn, after) {
-  const label = btn.textContent;
+// Save a pasted key: main validates it against Nexus BEFORE storing it, so a
+// mistyped key is refused with Nexus's own answer and nothing is written.
+// The input is cleared on success — the key is never shown back.
+async function saveNexusKey(input, btn, after) {
+  const key = input.value;
+  if (!key.trim()) { toast('Paste your Nexus API key first.', 'warn'); return false; }
   btn.disabled = true;
-  btn.textContent = 'Waiting for your browser…';
   try {
-    const data = await call('nexusSignIn');
+    const data = await call('setNexusKey', key);
     if (!data) return false;
     state = data;
+    input.value = '';
     render();
     if (after) after();
-    toast(`Signed in to Nexus Mods — welcome, ${state.nexus.user.name}.`);
+    toast(`Nexus key validated — welcome, ${state.nexus.user.name}.`);
     return true;
   } finally {
     btn.disabled = false;
-    btn.textContent = label;
   }
 }
-$('#btn-nexus-signin').addEventListener('click', (e) => runNexusSignIn(e.currentTarget));
+$('#btn-nexus-save').addEventListener('click', (e) => saveNexusKey($('#nexus-key-input'), e.currentTarget));
+$('#nexus-key-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveNexusKey($('#nexus-key-input'), $('#btn-nexus-save'));
+});
 $('#btn-nexus-verify').addEventListener('click', async () => {
   const data = await call('nexusRefreshUser');
   if (data) {
     state = data;
     render();
     const u = state.nexus.user;
-    toast(u ? `Nexus Mods confirmed the sign-in — ${u.name} (${u.isPremium ? 'premium' : 'free'} account).` : 'Nexus Mods confirmed the sign-in.');
+    toast(u ? `Nexus Mods accepted the key — ${u.name} (${u.isPremium ? 'premium' : 'free'} account).` : 'Nexus Mods accepted the key.');
   }
 });
-$('#btn-nexus-signout').addEventListener('click', async () => {
-  const data = await call('nexusSignOut');
-  if (data) { state = data; render(); toast('Signed out of Nexus Mods — the stored tokens were cleared and revoked.'); }
+$('#btn-nexus-clear').addEventListener('click', async () => {
+  const data = await call('clearNexusKey');
+  if (data) { state = data; render(); toast('Nexus key cleared.'); }
 });
 $('#btn-nxm-register').addEventListener('click', async () => {
   const registered = state.nexus && state.nexus.nxmRegistered;
@@ -1459,7 +1463,7 @@ $('#btn-nxm-register').addEventListener('click', async () => {
   if (data) {
     state = data;
     render();
-    toast(registered ? 'nxm:// handler removed.' : 'nxm:// links now open in Mod Command.');
+    toast(registered ? 'nxm:// handler removed.' : 'nxm:// links now open in Mod Command X.');
   }
 });
 // UE4SS version picker: every GitHub release with a runtime zip, newest
@@ -1471,7 +1475,7 @@ async function openUe4ssVersionsModal() {
   if (!data) return;
   const cur = data.installed;
   $('#ue4ss-versions-sub').textContent =
-    (cur ? `Installed by Mod Command: ${cur.name}${cur.restored ? ' (restored)' : ''}. ` : (data.status.installed ? 'The installed copy was not placed by Mod Command, so its build is unknown. ' : 'UE4SS is not installed. ')) +
+    (cur ? `Installed by Mod Command X: ${cur.name}${cur.restored ? ' (restored)' : ''}. ` : (data.status.installed ? 'The installed copy was not placed by Mod Command X, so its build is unknown. ' : 'UE4SS is not installed. ')) +
     'Two sources: the game-specific package on Nexus (stock UE4SS plus this game’s signatures, loader settings and helpers — what Download & install fetches by default) and the stock upstream build on GitHub, which carries none of that and is only a fallback. Every install keeps the build it replaces, so you can go back to whichever matched a frozen game version. The stable 3.0.x zips use a flat layout this manager cannot deploy and predate UE 5.6.';
   const list = $('#ue4ss-versions-list');
   list.innerHTML = '';
@@ -1556,7 +1560,7 @@ async function openUe4ssVersionsModal() {
     else if (cur && cur.source === 'nexus') badges.push(`installed: older v${cur.version || '?'} — newer available`);
     row(`${nx.name} v${nx.version || '?'}${badges.length ? ` — ${badges.join(' · ')}` : ''}`,
       `${nx.modName || 'Nexus mod 9'} · ${(nx.size / 1048576).toFixed(1)} MB · ${nx.publishedAt ? new Date(nx.publishedAt).toLocaleDateString() : ''} · ${tested}${nx.fileDescription ? ` · ${nx.fileDescription}` : ''}`,
-      data.isPremium ? (isCur ? '⭳ Reinstall' : '⭳ Install') : (data.signedIn ? 'Files page ↗' : 'Sign in to install ↗'),
+      data.isPremium ? (isCur ? '⭳ Reinstall' : '⭳ Install') : (data.signedIn ? 'Files page ↗' : 'Add API key to install ↗'),
       async () => {
         if (!data.isPremium) { $('#ue4ss-versions-modal').classList.add('hidden'); openNexusDownload('UE4SS for Star Wars Zero Company', data.nexusUrl); return; }
         const res = await call('installUe4ss', { nexusFileId: nx.fileId });
@@ -1612,8 +1616,8 @@ async function openUe4ssVersionsModal() {
 // Nexus Mods. { source:'github' } is the explicit stock upstream build,
 // { nexusFileId } / a tag string are the explicit picks from ⧗ Versions.
 // Handles the two answers only the default can give: a free account, which is
-// sent to the embedded Nexus page, and a signed-out one, which is offered the
-// sign-in or the stock build. Returns the install result, or null when nothing
+// sent to the embedded Nexus page, and no API key at all, which is offered
+// adding one or the stock build. Returns the install result, or null when nothing
 // was installed (the embedded page took over, or the user declined).
 async function runUe4ssInstall(arg) {
   let res = await call('installUe4ss', arg);
@@ -1623,11 +1627,11 @@ async function runUe4ssInstall(arg) {
     const gh = res.github || null;
     const go = window.confirm(
       `UE4SS for Zero Company is a game-specific package on Nexus Mods (signatures for this game${nx.testedBuild ? `, tested on build ${nx.testedBuild}` : ''}).\n\n` +
-      'Sign in to Nexus Mods to install it.\n\n' +
+      'Add your Nexus Mods API key in Settings to install it.\n\n' +
       `Install the stock upstream build from GitHub instead${gh && gh.build ? ` (${gh.build})` : ''}? ` +
       'It is not tested on this game and may not work after game patches.');
     if (!go) {
-      toast('UE4SS was not installed. Sign in at Settings → Nexus Mods, then press Download & install to get the Zero Company package.', 'info', 9000);
+      toast('UE4SS was not installed. Add your API key at Settings → Nexus Mods, then press Download & install to get the Zero Company package.', 'info', 9000);
       return null;
     }
     res = await call('installUe4ss', { source: 'github' });
@@ -1862,7 +1866,7 @@ for (const c of CATEGORIES) {
 }
 
 // Whether adult-tagged mods are listed is not a setting in this app: it is the
-// signed-in Nexus account's own content preference, decided in the main
+// API key's Nexus account's own content preference, decided in the main
 // process (adultAllowed()) and applied to every query there. Nothing here
 // asks for it and nothing here can change it.
 function browseParams() {
@@ -2069,7 +2073,7 @@ function makeHolonetVersionsBtn(m) {
   const btn = document.createElement('button');
   btn.className = 'btn ghost tiny';
   btn.textContent = '⧗';
-  btn.title = 'Choose a version — install any file the mod page offers (needs a Nexus Mods sign-in)';
+  btn.title = 'Choose a version — install any file the mod page offers (needs a Nexus Mods API key)';
   btn.addEventListener('click', () => openNexusVersionsModal(m));
   return btn;
 }
@@ -2227,7 +2231,7 @@ async function renderGroupableSection(mod) {
 }
 
 // The extras this mod's own Nexus page offers. Hidden entirely for a mod that
-// is not linked to Nexus, and reduced to one line while signed out.
+// is not linked to Nexus, and reduced to one line without an API key.
 async function renderNexusOptionalSection(mod) {
   const section = $('#optional-nexus-section');
   const list = $('#optional-files-list');
@@ -2235,10 +2239,10 @@ async function renderNexusOptionalSection(mod) {
   const linked = !!(mod.origin && mod.origin.type === 'nexus' && mod.origin.modId);
   section.classList.toggle('hidden', !linked);
   if (!linked) return;
-  if (!(state.nexus && state.nexus.signedIn)) {
+  if (!(state.nexus && state.nexus.hasKey)) {
     const note = document.createElement('div');
     note.className = 'dim optional-signin-note';
-    note.textContent = 'Sign in to Nexus Mods in Settings to list the page’s files.';
+    note.textContent = 'Add your Nexus Mods API key in Settings to list the page’s files.';
     list.appendChild(note);
     return;
   }
@@ -3120,7 +3124,7 @@ $('#btn-link-mods').addEventListener('click', async () => {
       return;
     }
     if (!res.signedIn) {
-      toast('Linking mods needs a Nexus Mods sign-in. Sign in from Settings.', 'warn', 8000);
+      toast('Linking mods needs a Nexus Mods API key. Add one in Settings.', 'warn', 8000);
       return;
     }
     startLinkWizard(res.suggestions);
@@ -3890,7 +3894,7 @@ let launcherUpdateUrl = null;
 function showLauncherBanner(info) {
   launcherUpdateUrl = info.url;
   $('#launcher-banner-text').textContent =
-    `Launcher update available — v${info.latest} (you have v${info.current})${info.notes ? `: ${info.notes}` : ''}`;
+    `Mod Command X update available — v${info.latest} (you have v${info.current})${info.notes ? `: ${info.notes}` : ''}`;
   $('#launcher-banner').classList.remove('hidden');
 }
 $('#launcher-banner-get').addEventListener('click', () => {
@@ -3968,13 +3972,11 @@ function refreshSetupModal() {
   $('#setup-game-note').textContent = det.found
     ? `Found the ${{ steam: 'Steam', ea: 'EA App', manual: 'manually installed' }[det.launcher] || ''} edition${det.buildId ? ` (build ${det.buildId})` : ''} — nothing to do here.`
     : 'The game was not auto-detected. Set the game folder in Settings → Paths after finishing setup.';
-  const signedIn = state.nexus && state.nexus.signedIn;
-  $('#setup-signin-status').textContent = signedIn ? '✔ SIGNED IN' : '· NEEDED';
-  $('#setup-signin-status').className = `setup-status ${signedIn ? 'good' : ''}`;
-  $('#btn-setup-signin').disabled = !!signedIn;
-  $('#btn-setup-signin').textContent = signedIn
-    ? `✔ Signed in as ${(state.nexus.user && state.nexus.user.name) || 'your Nexus account'}`
-    : 'Sign in with Nexus Mods';
+  const hasKey = state.nexus && state.nexus.hasKey;
+  $('#setup-key-status').textContent = hasKey ? '✔ SAVED' : '· NEEDED';
+  $('#setup-key-status').className = `setup-status ${hasKey ? 'good' : ''}`;
+  $('#setup-key-input').disabled = !!hasKey;
+  $('#btn-setup-key-save').disabled = !!hasKey;
   const nxm = state.nexus && state.nexus.nxmRegistered;
   $('#setup-nxm-status').textContent = nxm ? '✔ REGISTERED' : '· NEEDED';
   $('#setup-nxm-status').className = `setup-status ${nxm ? 'good' : ''}`;
@@ -3993,16 +3995,20 @@ async function closeSetupModal(finished) {
   if (data) { state = data; render(); }
   maybeRunFirstScan();
   if (!finished) {
-    toast('Setup skipped — the Nexus sign-in and one-click downloads live in Settings whenever you need them.', 'info', 8000);
+    toast('Setup skipped — the API key and one-click downloads live in Settings whenever you need them.', 'info', 8000);
   } else {
-    const ready = state.nexus && state.nexus.signedIn && state.nexus.nxmRegistered;
+    const ready = state.nexus && state.nexus.hasKey && state.nexus.nxmRegistered;
     toast(ready
       ? 'Mission-ready: press “Mod Manager Download” on any Nexus mod and it installs here.'
       : 'Setup saved — anything you left out is waiting in Settings.', 'info', 8000);
   }
 }
 
-$('#btn-setup-signin').addEventListener('click', (e) => runNexusSignIn(e.currentTarget, refreshSetupModal));
+$('#btn-setup-key-save').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  await saveNexusKey($('#setup-key-input'), btn, refreshSetupModal);
+  if (state.nexus && state.nexus.hasKey) btn.disabled = true; // saved: step done
+});
 
 $('#btn-setup-nxm').addEventListener('click', async () => {
   const data = await call('registerNxm');
@@ -4010,7 +4016,7 @@ $('#btn-setup-nxm').addEventListener('click', async () => {
     state = data;
     render();
     refreshSetupModal();
-    toast('nxm:// links now open in Mod Command.');
+    toast('nxm:// links now open in Mod Command X.');
   }
 });
 
@@ -4023,7 +4029,7 @@ $('#btn-rerun-setup').addEventListener('click', () => openSetupModal());
 refreshState().then(() => {
   runDiagnostics();
   if (!state) return;
-  const ready = state.nexus && state.nexus.signedIn && state.nexus.nxmRegistered;
+  const ready = state.nexus && state.nexus.hasKey && state.nexus.nxmRegistered;
   if (!state.settings.onboarded) {
     if (ready) {
       // Existing install that's already fully configured — mark and move on.
@@ -4037,7 +4043,7 @@ refreshState().then(() => {
 /* =======================================================================
    SDK LINK — the host half, and all of it.
 
-   Mod Command has no Forge panel. When an SDK is linked, lib/sdk-link.js
+   Mod Command X has no Forge panel. When an SDK is linked, lib/sdk-link.js
    parks a WebContentsView running the SDK'S OWN page over #content, and
    everything inside that view (doctor, templates, scaffolding, CHECK,
    BUILD, DEPLOY, the console) belongs to the SDK. This block only:
@@ -4111,7 +4117,7 @@ function sdkLinkRender() {
   $('#forge-fallback').classList.toggle('hidden', !s.linked);
   // ONE Get button on the pitch, ONE Get link on the card, both the published
   // url. Nothing published yet and nothing cached: no button, one dim line —
-  // "Point Mod Command at an installed SDK" stays, because that path needs no
+  // "Point Mod Command X at an installed SDK" stays, because that path needs no
   // network at all.
   const getUrl = (sdkLink.links.sdk && sdkLink.links.sdk.url) || null;
   const labels = getUrl ? sdkGetLabels(getUrl) : null;
@@ -4160,7 +4166,7 @@ function sdkLinkRender() {
 // from status().installed, falling back to the update answer's `installed`)
 // with its public name when the update answer knows it, then the workbench
 // manifest's own sdkUiVersion (display only — it is not the SDK's version and
-// can lag it), the contract and the Mod Command floor.
+// can lag it), the contract and the Mod Command X floor.
 //   current  -> "1.29.6 (public 1.0.3)"
 //   update   -> "1.29.6 (newest public 1.0.4)"
 function sdkVersionLabel(s, info) {
@@ -4181,7 +4187,7 @@ function sdkNoteRender() {
   const info = sdkLink.update || s.update || null;
   const cli = s.cliPath && s.cliPath !== s.sdkPath ? ` · CLI runs against ${s.cliPath}` : '';
   const noteEl = $('#set-sdk-note');
-  noteEl.textContent = `${m.name || 'Mod SDK'} ${sdkVersionLabel(s, info)} · workbench UI ${m.sdkUiVersion || 'dev'} · UI contract ${m.contract} · needs Mod Command ${m.minModCommand}+ (this is ${s.hostVersion})${cli}`;
+  noteEl.textContent = `${m.name || 'Mod SDK'} ${sdkVersionLabel(s, info)} · workbench UI ${m.sdkUiVersion || 'dev'} · UI contract ${m.contract} · needs Mod Command ${m.minModCommand}+ (Mod Command X is compatible with ${s.hostVersion})${cli}`;
   noteEl.className = 'setting-value dim';
 }
 

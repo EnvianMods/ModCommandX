@@ -1,4 +1,4 @@
-/* Zero Company Mod Command — Star Wars holo-terminal theme */
+/* Mod Command X — Star Wars holo-terminal theme */
 
 :root {
   --bg: #05080f;
@@ -577,7 +577,7 @@ body.reduced-motion * { transition: none !important; animation: none !important;
   border-bottom: 1px solid rgba(79, 209, 255, 0.15);
 }
 .browse-pic img { width: 100%; height: 100%; object-fit: cover; }
-/* Adult thumbnails, when the signed-in Nexus account asks for blurred adult
+/* Adult thumbnails, when the API key's Nexus account asks for blurred adult
    images. Hovering the card reveals it — the same gesture the site uses. */
 .browse-pic.adult-blur img { filter: blur(12px); transition: filter 0.15s ease; }
 .browse-card:hover .browse-pic.adult-blur img,

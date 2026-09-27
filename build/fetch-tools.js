@@ -24,7 +24,7 @@ const ZCSDK_LATEST = 'https://raw.githubusercontent.com/EnvianMods/ZCSDK-Runtime
 const log = (m) => console.log('  ' + m);
 
 async function download(url, dest) {
-  const res = await fetch(url, { redirect: 'follow', headers: { 'User-Agent': 'zero-company-mod-command-build' } });
+  const res = await fetch(url, { redirect: 'follow', headers: { 'User-Agent': 'mod-command-x-build' } });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
 }
@@ -69,7 +69,7 @@ async function zcsdkRuntime() {
   const zip = path.join(TOOLS, 'ZCSDKRuntime.zip');
   if (fs.existsSync(zip)) return log('ZCSDK Runtime: already present');
   log('ZCSDK Runtime: reading latest.json…');
-  const j = await fetch(ZCSDK_LATEST, { headers: { 'User-Agent': 'zero-company-mod-command-build' } }).then((r) => r.json());
+  const j = await fetch(ZCSDK_LATEST, { headers: { 'User-Agent': 'mod-command-x-build' } }).then((r) => r.json());
   if (!j || !j.version || !/^https:\/\/github\.com\/EnvianMods\/ZCSDK-Runtime-Release\/releases\/download\/.+\.zip$/i.test(j.url || '')) throw new Error('unexpected latest.json');
   await download(j.url, zip);
   fs.writeFileSync(path.join(TOOLS, 'zcsdk-runtime.json'), JSON.stringify({

@@ -15,7 +15,7 @@
 //
 // Options:
 //   --repo Owner/Name   target archive repo
-//                       (default: EnvianMods/ZeroCompanyModCommandArchive)
+//                       (default: EnvianMods/ModCommandXArchive)
 //   --branch <name>     target branch (default: main)
 //   --path <repo path>  target path in the repo (default: docs/HANDOFF.md)
 //   --file <path>       local file to push (default: HANDOFF.md at the repo root)
@@ -30,13 +30,21 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DEFAULT_REPO = 'EnvianMods/ZeroCompanyModCommandArchive';
+const DEFAULT_REPO = 'EnvianMods/ModCommandXArchive';
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_REPO_PATH = 'docs/HANDOFF.md';
+// X's own checkout only — never the upstream app's folder.
 const DEFAULT_HANDOFF_HOMES = [
   path.join(__dirname, '..', '..'),
-  'G:\\SteamLibrary\\steamapps\\common\\Star Wars Zero Company\\ZeroCompanyModManager',
 ];
+// The upstream project's publishing targets. Mod Command X must never write to them.
+const UPSTREAM_TARGETS = /^EnvianMods\/(ZeroCompanyModCommand(Archive)?|SWZeroCompanyFeaturedAuthors)$/i;
+function refuseUpstream(repo) {
+  if (UPSTREAM_TARGETS.test(repo)) {
+    console.error(`Refusing: ${repo} belongs to the upstream Zero Company Mod Command. Mod Command X writes only to its own repos.`);
+    process.exit(1);
+  }
+}
 
 function getToken() {
   for (const f of ['archive-token.txt', 'token.txt']) {
@@ -83,6 +91,7 @@ function findHandoff(flags) {
   const flags = parseArgs(process.argv.slice(2));
   const repo = flags.repo || DEFAULT_REPO;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { console.error('Bad --repo (expected Owner/Name):', repo); process.exit(1); }
+  refuseUpstream(repo);
   const branch = flags.branch || DEFAULT_BRANCH;
   const repoPath = (flags.path || DEFAULT_REPO_PATH).replace(/^\/+/, '');
   const API = `https://api.github.com/repos/${repo}`;
