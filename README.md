@@ -222,15 +222,13 @@ automatically for IoStore package inspection; a different copy can be selected i
   with thumbnails, author/version/category, download & endorsement counts, live search,
   category filter, and sorting (downloads / endorsements / newest / updated / name),
   with paging. Powered by the Nexus GraphQL v2 API (browsing needs no API key). The
-  Install button downloads+installs directly for premium accounts; non-premium
-  accounts get the mod's Files page opened — pressing "Mod Manager Download" there
-  sends the nxm:// link back into the manager, which installs it automatically.
+  Install button is one click for every account — see **One-click downloads** below.
 - **Nexus Mods integration** — paste your personal Nexus Mods API key in Settings →
   Nexus Mods (**Get my API key ↗** opens https://next.nexusmods.com/settings/api-keys;
   scroll to *Personal API Key*, press *Request an API key* if you have none, copy it)
   and press **Save**. The key is checked against `/v1/users/validate.json` before it
   is stored — that is also where your name and premium status come from, and premium
-  decides direct download vs. the website's "Mod Manager Download" — then kept
+  decides direct download vs. starting it on the website (One-click downloads, below) — then kept
   encrypted with your OS user credentials (Windows DPAPI via Electron safeStorage;
   plaintext only when the OS store is unavailable). It is never shown to the UI,
   never written to the log or the diagnostics report, only ever sent to
@@ -242,6 +240,33 @@ automatically for IoStore package inspection; a different copy can be selected i
   required key/expires). Every request to Nexus — v1, GraphQL and the download CDN —
   goes out through one helper (`lib/nexus-http.js`) that identifies the app as
   `Mod Command X` with its version and a `ModCommandX/<version>` User-Agent.
+- **One-click downloads** — every Nexus download button is a single click:
+  Holonet ⭳ Install and ⬆ Update, the Command Deck's ⬆ Update, ⧗ Versions
+  "Install this version", ⊕ Optional files ⭳ Install / Reinstall, and UE4SS
+  (Settings card and its ⧗ Versions). **Premium**: the file is downloaded through
+  the API and installed with no dialog in between; the button itself shows the
+  percentage, and several downloads can run at once (within the shared Nexus
+  request limits of `lib/nexus-http.js`). **Free accounts**: Nexus requires the
+  download to start on its website, so the click opens the in-app Nexus panel
+  straight at *that file's* download page
+  (`/{game}/mods/{modId}?tab=files&file_id={fileId}&nmm=1`, the file chosen
+  exactly as premium chooses it) and, with Settings → Nexus Mods → **Auto-click
+  Nexus download for free accounts** on (the default), presses **Slow download**
+  for you as soon as the site enables it. The nxm:// link the site hands back is
+  caught in the main process and installed; the panel closes itself. A status
+  strip says what is happening. The page stays fully visible (ads included),
+  Nexus's wait is never skipped, each button is pressed at most once per page
+  load, a bot check / CAPTCHA stops the automation and is left to you, and if
+  nothing usable shows up within ~20 s the strip asks you to click "Slow
+  download" yourself. Not signed in? Sign in inside the panel — the download
+  continues by itself afterwards. It runs only on the file page the one-click
+  opened, never on anything else you browse to there. Further free-account
+  downloads wait in a queue ("N queued ✕" cancels them) and open one after
+  another. Everything that knows what the Nexus page looks like — selectors,
+  button texts, countdown and challenge markers — lives in
+  `src/nexus-autoclick.js`; that is the one file to update when Nexus changes
+  its page. GitHub installs keep their confirmation, because it is the "GitHub
+  mods aren't moderated" trust warning.
 - **Request allowance, read from Nexus** — Settings → Nexus Mods shows the quota
   Nexus reports on every reply ("API requests: 1,950 of 2,000 this hour (resets
   16:00) · 19,900 of 20,000 today (resets 00:00 UTC)"). When it runs out the app
@@ -264,9 +289,9 @@ automatically for IoStore package inspection; a different copy can be selected i
   versa: an optional file only ever follows the site's own update chain, never
   the newest main file). Turning the mod off turns its optional files off,
   turning it back on leaves them as they were, and uninstalling the mod removes
-  them with it. Non-premium accounts get the same flow through the embedded
-  Nexus panel — "Mod Manager Download" on an optional file lands it under the
-  mod it belongs to.
+  them with it. Free accounts get the same one click through the embedded
+  Nexus panel, opened at that optional file's own download page — what comes
+  back lands under the mod row the button was pressed on.
 - **Grouping mods you installed yourself** *(experimental — `feat/optional-files`)*
   — nothing about that nesting needs Nexus. The **⊕ Optional files** button is on
   every mod, linked or not, with an API key or not, and its second section, **ALREADY
@@ -290,8 +315,8 @@ automatically for IoStore package inspection; a different copy can be selected i
   states the game build it was tested on). That is the default for every one-click
   path — the Settings card, the ZCSDK-runtime prompt and `install-ue4ss` with no
   payload. Premium accounts download it directly; free accounts get the embedded
-  Nexus page, whose "Mod Manager Download" comes back as nxm:// into `handleNxm`,
-  which recognises the runtime; users without an API key are offered adding one or, on
+  Nexus panel at that file's download page (the one-click flow above), whose
+  nxm:// comes back into `handleNxm`, which recognises the runtime; users without an API key are offered adding one or, on
   confirmation, the stock upstream build. The page is read anonymously via
   GraphQL (`refreshNexusLatest()`), and the tested build is recorded with the
   install (`settings.ue4ssInstalled.testedBuild`) and compared with the installed
@@ -384,6 +409,7 @@ lib/store.js       portable JSON store  → data/manager-data.json
 lib/mods.js        mod engine: classify/install/deploy/order/conflicts/UE4SS
 lib/archive.js     zip (bsdtar / extract-zip) + 7z/rar (7-Zip CLI — tools/7-Zip on Windows, system copy on Linux)
 src/               UI (index.html / styles.css / app.js) — holo-terminal theme
+src/nexus-autoclick.js  free-account one-click: every Nexus download-page selector + the in-page auto-click
 data/              settings when running from source (shipped builds use %APPDATA%\ModCommandX)
 ```
 
