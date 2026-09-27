@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('zc', {
   // hasKey / keyEncrypted).
   setNexusKey: (key) => invoke('set-nexus-key', { key }),
   clearNexusKey: () => invoke('clear-nexus-key'),
+  // Clears the embedded Nexus website panel's login (persist:nexus session).
+  nexusWebSignOut: () => invoke('nexus-web-signout'),
   validateNexusKey: () => invoke('validate-nexus-key'),
   nexusRefreshUser: () => invoke('nexus-refresh-user'),
   nexusQuota: () => invoke('nexus-quota'),

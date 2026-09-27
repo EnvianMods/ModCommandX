@@ -1267,12 +1267,13 @@ function renderSettings() {
   renderProfiles();
   // Nexus
   const nx = state.nexus || {};
-  const keyStorage = nx.keyEncrypted ? ' · encrypted at rest' : '';
+  const keyStorage = nx.keyEncrypted ? ' · encrypted at rest' : (nx.keySessionOnly ? ' · this session only' : '');
   $('#nexus-status').textContent = nx.hasKey
     ? (nx.user
       ? `Key valid — ${nx.user.name} · ${nx.user.isPremium ? 'Premium' : 'Free'} member${keyStorage}`
       : `Key stored${keyStorage} — press Verify to check it`)
     : 'No key stored';
+  $('#nexus-key-session-note').classList.toggle('hidden', !(nx.hasKey && nx.keySessionOnly));
   $('#btn-nexus-verify').classList.toggle('hidden', !nx.hasKey);
   $('#btn-nexus-clear').classList.toggle('hidden', !nx.hasKey);
   // Read-only: this app has no adult-content switch of its own. It reports
@@ -1489,6 +1490,13 @@ $('#btn-nexus-verify').addEventListener('click', async () => {
 $('#btn-nexus-clear').addEventListener('click', async () => {
   const data = await call('clearNexusKey');
   if (data) { state = data; render(); toast('Nexus key cleared.'); }
+});
+$('#btn-nexus-web-signout').addEventListener('click', async () => {
+  const data = await call('nexusWebSignOut');
+  if (data) {
+    try { const wv = $('#nexus-dl-view'); if (wv && wv.getURL && wv.getURL() !== 'about:blank') wv.reload(); } catch (_) {}
+    toast('Signed out of the Nexus website panel.');
+  }
 });
 $('#btn-nxm-register').addEventListener('click', async () => {
   const registered = state.nexus && state.nexus.nxmRegistered;

@@ -154,55 +154,172 @@ async function autoRestoreFromArchive() {
 
 // ---------------------------------------------------------- Nexus API key at rest
 // Mod Command X authenticates with the user's own personal Nexus Mods API key
-// (Settings -> Nexus Mods -> "Get my API key"). It is kept encrypted with the
-// OS user's credentials (DPAPI on Windows) via Electron safeStorage; plaintext
-// is only the fallback when the OS store is unavailable, and a plaintext key is
-// migrated to the encrypted form on startup. The key never reaches the
-// renderer, the log or a diagnostics report. A stored key is never deleted by
-// the app — only the user's own "Clear" removes it.
+// (Settings -> Nexus Mods -> "Get my API key"). The rule is simple: the key is
+// NEVER written to disk in plain text.
+//   - With a secure OS key store (DPAPI on Windows, Keychain on macOS, a real
+//     keyring — libsecret/kwallet — on Linux) it is stored encrypted through
+//     Electron safeStorage as settings.nexusApiKeyEncrypted.
+//   - Without one (safeStorage unavailable, or Linux's `basic_text` fallback,
+//     which is only obfuscation with a hard-coded password) it is kept in
+//     memory for this session only; the user re-enters it next time.
+//   - A plaintext settings.nexusApiKey left by an older build is migrated on
+//     startup (encrypted, or moved into memory) and deleted from settings.json
+//     and from the game-side archive mirror.
+// The decrypted key never reaches the renderer, the log (lib/redact.js masks
+// it anywhere it might appear) or a diagnostics report. A stored key is only
+// removed by the user's own "Clear".
+
+const { redactSecrets, registerSecret, forgetSecrets } = require('./lib/redact');
 
 const KEY_REQUIRED = 'Add your Nexus Mods API key in Settings first.';
+
+// Settings fields that hold (or held, in upstream/older builds) a credential.
+// None of them ever reaches the renderer, a report or the archive mirror.
+const SECRET_SETTING_KEYS = ['nexusApiKey', 'nexusApiKeyEncrypted', 'nexusOAuth', 'nexusOAuthEncrypted'];
+
+function publicSettings() {
+  const out = { ...store.settings };
+  for (const k of SECRET_SETTING_KEYS) delete out[k];
+  return out;
+}
+
+// Linux: ask Chromium for a real keyring instead of letting it fall back to
+// `basic_text` on a desktop it does not recognise (tiling WMs, gamescope…).
+// KDE is auto-detected to kwallet already; an explicit --password-store wins.
+if (process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
+  const desktop = String(process.env.XDG_CURRENT_DESKTOP || '').toLowerCase();
+  if (!/kde|plasma/.test(desktop)) app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
+
+// Is there a SECURE place to keep the key? isEncryptionAvailable() alone is not
+// enough on Linux, where it is also true for the obfuscation-only basic_text
+// backend. MCX_TEST_NO_SECURE_STORE=1 simulates "no store" in dev runs only.
+function secureKeyStore() {
+  if (!app.isPackaged && process.env.MCX_TEST_NO_SECURE_STORE === '1') return { available: false, backend: 'test-disabled' };
+  let available = false;
+  let backend = null;
+  try { available = safeStorage.isEncryptionAvailable(); } catch (_) {}
+  if (process.platform === 'linux') {
+    try { backend = safeStorage.getSelectedStorageBackend(); } catch (_) {}
+    if (!backend || backend === 'basic_text' || backend === 'unknown') available = false;
+  }
+  return { available, backend };
+}
 
 // The decrypted key, held in memory so the many sync nexusSignedIn() gates
 // (fullState runs one per state push) do not each go through DPAPI.
 // undefined = not read yet; storeNexusKey/clear reset it.
 let nexusKeyCache;
+// A key that has no secure home on this system lives here, for this session
+// only — it is never written anywhere.
+let sessionOnlyKey = null;
 
 function nexusKey() {
-  if (nexusKeyCache === undefined) nexusKeyCache = readNexusKey();
+  if (nexusKeyCache === undefined) {
+    nexusKeyCache = readNexusKey();
+    if (nexusKeyCache) registerSecret(nexusKeyCache);
+  }
   return nexusKeyCache;
 }
 
 function readNexusKey() {
-  const s = store.settings;
-  if (s.nexusApiKeyEncrypted) {
-    try {
-      if (safeStorage.isEncryptionAvailable()) {
-        return safeStorage.decryptString(Buffer.from(s.nexusApiKeyEncrypted, 'base64'));
-      }
-    } catch (_) { /* wrong OS user / corrupted blob — treat as no key */ }
-    return null;
-  }
-  return s.nexusApiKey || null;
+  if (sessionOnlyKey) return sessionOnlyKey;
+  const blob = store.settings.nexusApiKeyEncrypted;
+  if (!blob) return null; // a plaintext nexusApiKey is never read — migrateNexusKey moves it
+  try {
+    if (secureKeyStore().available) return safeStorage.decryptString(Buffer.from(blob, 'base64'));
+  } catch (_) { /* wrong OS user / corrupted blob / keyring locked — treat as no key */ }
+  return null;
 }
 
+// key = the new key, or null to clear (both stored fields AND the in-memory
+// copies). Returns 'encrypted' | 'session' | 'cleared'.
 function storeNexusKey(key) {
   nexusKeyCache = undefined;
-  if (key && safeStorage.isEncryptionAvailable()) {
+  sessionOnlyKey = null;
+  store.settings.nexusApiKey = null;
+  let how = 'cleared';
+  if (!key) {
+    store.settings.nexusApiKeyEncrypted = null;
+    forgetSecrets();
+  } else if (secureKeyStore().available) {
     store.settings.nexusApiKeyEncrypted = safeStorage.encryptString(key).toString('base64');
-    store.settings.nexusApiKey = null;
+    how = 'encrypted';
   } else {
     store.settings.nexusApiKeyEncrypted = null;
-    store.settings.nexusApiKey = key || null;
+    sessionOnlyKey = key;
+    how = 'session';
   }
+  if (key) registerSecret(key);
   store.save();
+  return how;
 }
 
 function migrateNexusKey() {
   const s = store.settings;
-  if (s.nexusApiKey && !s.nexusApiKeyEncrypted && safeStorage.isEncryptionAvailable()) {
-    storeNexusKey(s.nexusApiKey);
+  let changed = false;
+  // Credentials of the upstream OAuth build: X has no use for them — drop them.
+  for (const k of ['nexusOAuth', 'nexusOAuthEncrypted']) {
+    if (k in s) { delete s[k]; changed = true; }
   }
+  if (s.nexusApiKey) {
+    const plain = String(s.nexusApiKey);
+    registerSecret(plain);
+    s.nexusApiKey = null;
+    changed = true;
+    if (s.nexusApiKeyEncrypted) {
+      log('info', 'nexus: removed a leftover plaintext API key (an encrypted one is already stored)');
+    } else if (secureKeyStore().available) {
+      s.nexusApiKeyEncrypted = safeStorage.encryptString(plain).toString('base64');
+      log('info', 'nexus: plaintext API key migrated to the OS key store and removed from settings.json');
+    } else {
+      sessionOnlyKey = plain;
+      log('info', 'nexus: plaintext API key removed from settings.json; no secure key store on this system, so it is kept for this session only — enter it again next session');
+    }
+    nexusKeyCache = undefined;
+  }
+  if (changed) store.save();
+  scrubSecretsFromDisk();
+}
+
+// Remove credential fields from every settings copy this app itself writes:
+// a leftover atomic-write .tmp and the manager-data.json mirror in the mod
+// archive (Store.save() writes the mirror without them, but its empty-store
+// guard can skip a rewrite, so an old mirror is cleaned here explicitly).
+// The encrypted blob is also kept out of the mirror: it belongs to this
+// machine's OS account and has no use in a game-folder backup.
+function scrubSecretsFromDisk() {
+  const files = [store.file + '.tmp'];
+  if (store.storageRoot && path.resolve(store.storageRoot) !== path.resolve(store.dataDir)) {
+    files.push(path.join(store.storageRoot, 'manager-data.json'));
+  }
+  for (const file of files) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      if (file.endsWith('.tmp')) { fs.rmSync(file, { force: true }); continue; }
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const st = raw && raw.settings;
+      if (!st || !SECRET_SETTING_KEYS.some((k) => k in st)) continue;
+      for (const k of SECRET_SETTING_KEYS) delete st[k];
+      fs.writeFileSync(file, JSON.stringify(raw, null, 2));
+      log('info', 'removed stored credentials from the archive manifest mirror');
+    } catch (err) {
+      log('error', `could not scrub credentials from a settings copy: ${err.message}`);
+    }
+  }
+}
+
+// The Nexus website panel (<webview partition="persist:nexus">) keeps the
+// user's nexusmods.com login in this Electron profile. Release builds encrypt
+// its cookies at rest (EnableCookieEncryption fuse, build/after-pack.js); this
+// wipes the whole partition — cookies, localStorage, IndexedDB, cache.
+async function signOutNexusWebsite() {
+  const { session } = require('electron');
+  const ses = session.fromPartition('persist:nexus');
+  await ses.clearStorageData();
+  await ses.clearCache();
+  try { await ses.clearAuthCache(); } catch (_) {}
+  try { ses.flushStorageData(); } catch (_) {}
 }
 
 // --------------------------------------------------------- adult content
@@ -771,6 +888,7 @@ app.whenReady().then(() => {
   // Archive lives in the game folder (or the custom location) — migrate any
   // app-side content there, then restore from it when this store is fresh.
   try { ensureStorage(); } catch (err) { log('error', `archive setup failed: ${err.message}`); }
+  try { scrubSecretsFromDisk(); } catch (_) {} // the archive mirror is known only now
   try { eaAppDetected = ea.eaAppPresent(); } catch (_) {}
   // EA-compat community list: fetch now and refresh every 30 minutes; a state
   // push follows so freshly flagged mods surface without a restart.
@@ -1022,7 +1140,7 @@ function fullState() {
   for (const m of store.mods) modCompat[m.id] = ea.evaluateMod(m, compat);
   return {
     // The API key NEVER crosses into the renderer — only whether we have one.
-    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined, hasNexusKey: nexusSignedIn() },
+    settings: { ...publicSettings(), hasNexusKey: nexusSignedIn() },
     profiles: store.profiles,
     lastOrderBackup: store.data.lastOrderBackup
       ? { at: store.data.lastOrderBackup.at }
@@ -1030,6 +1148,9 @@ function fullState() {
     nexus: {
       hasKey: nexusSignedIn(),
       keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
+      // No secure OS key store: a key is held for this session only.
+      keySessionOnly: !!sessionOnlyKey,
+      secureStore: secureKeyStore().available,
       // Premium drives the premium-vs-free download split; it is only known
       // once validate.json has answered for the stored key.
       premium: !!(nexusUser && nexusUser.isPremium),
@@ -1341,7 +1462,8 @@ function detectManagerSources() {
 }
 
 function ok(data) { return { ok: true, data }; }
-function fail(err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+// Error text crossing to the renderer goes through the secret redactor too.
+function fail(err) { return { ok: false, error: redactSecrets(err && err.message ? err.message : String(err)) }; }
 
 const handlers = {
   'get-state': async () => fullState(),
@@ -1550,19 +1672,27 @@ const handlers = {
     const trimmed = String(key || '').trim();
     if (!trimmed) throw new Error('The API key is empty.');
     const who = await nexus.validateKey(trimmed); // throws "rejected the API key" on a bad one
-    storeNexusKey(trimmed);
+    const how = storeNexusKey(trimmed);
     await loadNexusUser(trimmed, who);
     promotedCache.mods = null; // the adult answer may have changed
-    log('info', `nexus: API key saved for ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}${store.settings.nexusApiKeyEncrypted ? ' (encrypted)' : ' (plaintext — OS store unavailable)'}`);
+    log('info', `nexus: API key saved for ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}${how === 'encrypted' ? ' (encrypted with the OS key store)' : ' (session only — no secure OS key store, nothing written to disk)'}`);
     return fullState();
   },
-  // The user's own "Clear" — the only way a stored key is ever removed.
+  // The user's own "Clear" — the only way a stored key is ever removed. Wipes
+  // the encrypted field, any plaintext leftover and the in-memory copies.
   'clear-nexus-key': async () => {
     storeNexusKey(null);
     nexusUser = null;
     promotedCache.mods = null;
     log('info', 'nexus: API key cleared');
     return fullState();
+  },
+  // Settings -> "Sign out of the Nexus website panel": forget the nexusmods.com
+  // login the embedded panel keeps (cookies, site storage, cache).
+  'nexus-web-signout': async () => {
+    await signOutNexusWebsite();
+    log('info', 'nexus: signed out of the Nexus website panel (persist:nexus session cleared)');
+    return { cleared: true };
   },
   'validate-nexus-key': async () => {
     await loadNexusUser(await nexusAccessToken());
@@ -2746,9 +2876,10 @@ function buildSupportReport() {
     detection,
     eaAppPresent: eaAppDetected,
     // The key itself never enters the report — not even encrypted.
-    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined },
+    settings: publicSettings(),
     hasNexusKey: nexusSignedIn(),
     keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
+    keySessionOnly: !!sessionOnlyKey,
     mods: store.mods,
     modCompat,
     conflicts,

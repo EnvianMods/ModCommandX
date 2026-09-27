@@ -15,6 +15,7 @@
   "author": "Fulme",
   "license": "MIT",
   "devDependencies": {
+    "@electron/fuses": "1.8.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8"
   },
@@ -24,6 +25,7 @@
   "build": {
     "appId": "com.zerocompany.modcommandx",
     "productName": "Mod Command X",
+    "afterPack": "build/after-pack.js",
     "directories": {
       "output": "release"
     },
