@@ -917,13 +917,12 @@ async function handleNxm(rawUrl) {
       if (pinnedParent) plan = pinPlanToParent(plan, link.modId, link.fileId, filesData.updates, pinnedParent);
       const version = (fileMeta && fileMeta.version) || (info ? info.version : null);
       const origin = { type: 'nexus', modId: link.modId, fileId: link.fileId, version, category: plan.category, fileName };
-      // The UE4SS compatibility page: keep the current runtime first, and
-      // record the install so the Settings card can track this source.
+      // The UE4SS for Star Wars Zero Company page: keep the current runtime
+      // first, and record the install so updates can be tracked.
       const isUe4ssPage = link.modId === ue4ssDl.NEXUS_MOD_ID;
       if (isUe4ssPage) {
-        const cur = store.settings.ue4ssInstalled || null;
-        const kept = engine.ue4ssSnapshot(ue4ssLabel(cur), cur);
-        if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
+        if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+        keepCurrentUe4ss();
       }
       if (plan.mode === 'replace-parent' || plan.mode === 'replace-child') {
         const isChild = plan.mode === 'replace-child';
@@ -945,7 +944,8 @@ async function handleNxm(rawUrl) {
           forwardFomod(res, info ? info.name : `mod ${link.modId}`);
         } else if (res.modType === 'ue4ss-runtime') {
           if (isUe4ssPage) recordNexusUe4ss({ fileId: link.fileId, version, asset: fileName, publishedAt: fileMeta && fileMeta.uploaded_timestamp ? new Date(fileMeta.uploaded_timestamp * 1000).toISOString() : null });
-          sendEvent({ type: 'toast', message: `UE4SS runtime installed from Nexus${version ? ` (v${version})` : ''}. Your UE4SS mods and start order are unchanged.` });
+          log('info', `UE4SS runtime from Nexus mod ${link.modId} file ${link.fileId} installed (${ue4ssReportText(res.report)})`);
+          sendEvent({ type: 'toast', message: `UE4SS runtime installed from Nexus${version ? ` (v${version})` : ''}. Your UE4SS mods, mods.txt and settings were kept.` });
         } else if (plan.mode === 'child') {
           const mods = installedMods(res);
           nameOptionalChild(mods, plan);
@@ -1060,10 +1060,11 @@ async function checkForUpdates({ background = false } = {}) {
       results.errors.push(`${mod.name}: ${err.message}`);
     }
   }
-  // The UE4SS runtime rides along: refresh the rolling build and report when
-  // the installed build is behind it (counted separately from mod updates).
+  // The UE4SS runtime rides along: re-read "UE4SS for Star Wars Zero Company"
+  // on Nexus and report when the installed file is behind its main file
+  // (counted separately from mod updates).
   try {
-    await Promise.all([ue4ssDl.refreshLatest(true), ue4ssDl.refreshNexusLatest(true), retocDl.refreshLatest(true)]);
+    await Promise.all([ue4ssDl.refreshNexusLatest(true), retocDl.refreshLatest(true)]);
     const u = ue4ssDl.updateInfo(store.settings.ue4ssInstalled);
     results.ue4ssUpdate = u.available ? { source: u.source, currentBuild: u.currentBuild, latestBuild: u.latestBuild, latestDate: u.latestDate } : null;
     const ru = retocDl.updateInfo(engine.retocStatus().version);
@@ -1272,33 +1273,25 @@ app.whenReady().then(() => {
       sendEvent({ type: 'toast', message: `ZCSDK Runtime ${remote.version} is available — update it from Settings → ZCSDK Runtime.` });
     }
   });
-  // UE4SS: learn the newest rolling build; the Settings card compares the
-  // installed build against it. Nudge once per new build.
+  // retoc: learn the newest GitHub release; nudge once per version.
+  // UE4SS for Star Wars Zero Company (Nexus mod 9): at startup and hourly,
+  // the same cadence as every other check. Updates itself when that is on and
+  // possible, otherwise says so; a stock/unknown UE4SS gets the switch notice.
   win.webContents.once('did-finish-load', async () => {
-    const [latest, nx] = await Promise.all([ue4ssDl.refreshLatest(), ue4ssDl.refreshNexusLatest(), retocDl.refreshLatest()]);
-    {
-      const ru = retocDl.updateInfo(engine.retocStatus().version);
-      if (ru.available && store.settings.retocNoticedVersion !== ru.latest) {
-        store.settings.retocNoticedVersion = ru.latest;
-        store.save();
-        sendEvent({ type: 'toast', message: `retoc ${ru.latest} is out (you have ${ru.installed}) — update it from Settings → retoc.` });
-      }
-    }
-    if (!latest && !nx) { sendEvent({ type: 'state', state: fullState() }); return; }
-    const u = ue4ssDl.updateInfo(store.settings.ue4ssInstalled);
-    sendEvent({ type: 'state', state: fullState() });
-    if (u.available && store.settings.ue4ssNoticedBuild !== u.latest) {
-      store.settings.ue4ssNoticedBuild = u.latest;
+    maybeCheckUe4ss().catch(() => {});
+    await retocDl.refreshLatest();
+    const ru = retocDl.updateInfo(engine.retocStatus().version);
+    if (ru.available && store.settings.retocNoticedVersion !== ru.latest) {
+      store.settings.retocNoticedVersion = ru.latest;
       store.save();
-      sendEvent({ type: 'toast', message: u.source === 'nexus'
-        ? `A newer UE4SS compatibility build is on Nexus (${u.latestBuild}, ${new Date(u.latestDate).toLocaleDateString()}) — you have ${u.currentBuild}. Update from Settings → UE4SS.`
-        : `A newer UE4SS build is out (${u.latestBuild}, ${new Date(u.latestDate).toLocaleDateString()}) — you have ${u.currentBuild}. Update from Settings → UE4SS.` });
+      sendEvent({ type: 'toast', message: `retoc ${ru.latest} is out (you have ${ru.installed}) — update it from Settings → retoc.` });
     }
   });
   // (A fresh store's mods come back from the archive in ensureStorage():
   // reconcileSharedArchive adopts every stored mod in place. The old
   // re-install-and-prune auto-restore would give the main Mod Command's
   // stored copies new ids and delete the originals it still uses.)
+  setInterval(() => { if (win && !win.isDestroyed()) maybeCheckUe4ss().catch(() => {}); }, UPDATE_CHECK_MS);
   win.webContents.once('did-finish-load', async () => {
     // One-time automatic existing-mods scan after the first game connection —
     // the review dialog opens by itself when there is anything to adopt.
@@ -1539,9 +1532,15 @@ function fullState() {
     mods: store.mods.map((m) => (engine.storedCopyMissing(m) ? { ...m, storedMissing: true } : m)),
     conflicts,
     ue4ssHooks,
-    // release = the GitHub release this app installed (null for a copy the
-    // user placed by hand or one installed before 1.9.8 recorded it).
-    ue4ss: { ...engine.ue4ssStatus(), release: store.settings.ue4ssInstalled || null, update: ue4ssDl.updateInfo(store.settings.ue4ssInstalled) },
+    // release = what this app last installed (null for a copy placed by hand);
+    // origin = which UE4SS is on disk (nexus / stock / unknown / none, see
+    // lib/ue4ss.js classifyInstall); pending = an update held back (game running).
+    ue4ss: {
+      ...engine.ue4ssStatus(), release: store.settings.ue4ssInstalled || null,
+      update: ue4ssDl.updateInfo(store.settings.ue4ssInstalled), origin: ue4ssOrigin(),
+      autoUpdate: store.settings.ue4ssAutoUpdate !== false, pending: ue4ssPending,
+      nexusUrl: ue4ssDl.NEXUS_URL,
+    },
     zcsdk: engine.zcsdkStatus(),
     retoc: (() => { const r = engine.retocStatus(); return { ...r, update: retocDl.updateInfo(r.version), installedRecord: store.settings.retocInstalled || null }; })(),
     sevenZip: !!findSevenZip(store.settings.sevenZipPath),
@@ -2626,6 +2625,10 @@ const handlers = {
   'github-browse': async (_e, opts) => github.listCurated(opts || {}),
 
   'github-install': async (_e, { fullName }) => {
+    // Never the stock UE4SS: Mod Command X installs UE4SS only from Nexus mod 9.
+    if (/(^|\/)(RE-UE4SS|UE4SS)$/i.test(String(fullName || '')) || /^UE4SS-RE\//i.test(String(fullName || ''))) {
+      throw new Error('Mod Command X installs UE4SS only from “UE4SS for Star Wars Zero Company” on Nexus Mods — use Settings → UE4SS.');
+    }
     const release = await github.latestReleaseFor(fullName);
     if (!release) throw new Error('That repository has no installable release.');
     const choice = await dialog.showMessageBox(win, {
@@ -2732,103 +2735,84 @@ const handlers = {
     throw new Error('That mod has no update source.');
   },
 
-  // UE4SS runtime. With NO payload this installs the game-specific package —
-  // Nexus mod 9 "UE4SS for Star Wars Zero Company" (stock UE4SS plus this
-  // game's signatures, loader settings and helpers). That is what a Zero
-  // Company install needs; the stock upstream build from GitHub carries none of
-  // it and stops working after a game patch, so it is only ever a deliberate
-  // fallback: { source:'github' } (the explicit "stock build" choice),
-  // { tag } (one published release — Settings → UE4SS → ⧗ Versions, for a user
-  // who has frozen game updates), or the automatic fallback below when the
-  // Nexus page cannot be read. { nexusFileId } installs one specific Nexus file.
+  // UE4SS runtime: ALWAYS "UE4SS for Star Wars Zero Company" from Nexus Mods
+  // (mod 9) — the UE4SS build published for this game, with its signatures,
+  // loader settings and helpers. The stock upstream build from GitHub is never
+  // installed or updated from here. With no payload this installs mod 9's
+  // current main file; { nexusFileId } installs one specific file of that page
+  // (⧗ Versions, for a game kept on an older build). The same call is the
+  // install, the update and the one-click switch away from a stock/unknown
+  // UE4SS: only UE4SS's own files are replaced; ue4ss\Mods, mods.txt and the
+  // user's settings are kept (lib/mods.js _installUe4ssRuntime).
   //
-  // Default result, by account: premium → downloaded and installed here; free →
-  // { opened:'embed', url, name, hint } for the embedded Nexus page (its "Mod
-  // Manager Download" comes back as nxm:// into handleNxm); no API key →
-  // { needsChoice, nexus, github } so the renderer can offer adding a key or the
-  // stock build.
+  // Result, by account: premium → downloaded and installed here (inline
+  // progress, key 'ue4ss'); free → X's one-click answer (embedDownload:
+  // { opened:'embed', url: the exact file's download page, auto, hint }) — the
+  // renderer queues it in the embedded panel with the auto-click, or hands it
+  // to the user's browser, and the nxm:// comes back into handleNxm; no API
+  // key → { needsKey, url, name, nexus } — the renderer offers adding the key,
+  // or shows the page. There is no other source to fall back to.
   'install-ue4ss': async (_e, payload) => {
     if (!store.settings.gamePath) throw new Error('Locate the game folder in Settings first.');
-    if (payload && payload.nexusFileId) return installUe4ssFromNexus(Number(payload.nexusFileId));
-    const tag = payload && payload.tag ? String(payload.tag) : null;
-    const wantsGithub = !!(payload && payload.source === 'github');
-    if (!tag && !wantsGithub) {
-      let nx = ue4ssDl.cachedNexusLatest();
-      if (!nx) { try { nx = await ue4ssDl.refreshNexusLatest(); } catch (_) { nx = null; } }
-      if (nx && nx.fileId) {
-        if (!nexusSignedIn()) {
-          let gh = ue4ssDl.cachedLatest();
-          if (!gh) { try { gh = await ue4ssDl.refreshLatest(); } catch (_) { gh = null; } }
-          return {
-            needsChoice: true,
-            nexus: { version: nx.version || null, testedBuild: nx.testedBuild || null, date: nx.publishedAt || null },
-            github: gh ? { build: ue4ssDl.shortBuild(gh.name), date: gh.publishedAt || null } : null,
-          };
-        }
-        return installUe4ssFromNexus(Number(nx.fileId));
-      }
-      // Offline, or the Nexus page/API changed: GitHub still gets UE4SS onto
-      // the disk, but the user is told exactly what they are getting.
-      sendEvent({
-        type: 'toast', kind: 'warn',
-        message: 'The Nexus page for “UE4SS for Star Wars Zero Company” could not be read, so Mod Command X is installing the stock upstream build from GitHub instead — it has no Zero Company signatures and may not work after a game patch.',
-      });
+    const wanted = payload && payload.nexusFileId ? Number(payload.nexusFileId) : null;
+    let nx = ue4ssDl.cachedNexusLatest();
+    if (!nx) { try { nx = await ue4ssDl.refreshNexusLatest(true); } catch (_) { nx = null; } }
+    if (!wanted && !(nx && nx.fileId)) {
+      throw new Error(`The Nexus page for “${ue4ssDl.NEXUS_NAME}” could not be read right now — check your connection and try again. Mod Command X installs UE4SS only from that page.`);
     }
-    const asset = tag ? await ue4ssDl.runtimeByTag(tag) : await ue4ssDl.latestRuntime();
-    // Keep the build that is there now, so it can be restored from ⧗ Versions.
-    const cur = store.settings.ue4ssInstalled || null;
-    const kept = engine.ue4ssSnapshot(ue4ssLabel(cur), cur);
-    if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
-    sendEvent({ type: 'toast', message: `Downloading ${asset.name} (${(asset.size / 1048576).toFixed(1)} MB) from GitHub…` });
-    const dest = await nexus.downloadToFile(asset.url, store.stagingDir, asset.name, (got, total) => {
-      sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS ${asset.releaseName}`, received: got, total });
-    });
-    try {
-      const result = await engine.install(dest);
-      if (result.modType !== 'ue4ss-runtime') {
-        throw new Error('The downloaded archive did not contain a UE4SS runtime layout.');
-      }
-    } finally {
-      fs.rmSync(dest, { force: true });
+    if (!nexusSignedIn()) {
+      return {
+        needsKey: true, url: ue4ssDl.NEXUS_URL, name: ue4ssDl.NEXUS_NAME,
+        nexus: nx ? { version: nx.version || null, testedBuild: nx.testedBuild || null, date: nx.publishedAt || null } : null,
+      };
     }
-    store.settings.ue4ssInstalled = {
-      source: 'github', tag: asset.tag, name: asset.releaseName, asset: asset.name, prerelease: !!asset.prerelease,
-      publishedAt: asset.publishedAt || null, installedAt: new Date().toISOString(),
-    };
-    store.settings.ue4ssNoticedBuild = asset.name;
-    store.save();
-    log('info', `UE4SS ${asset.releaseName} (${asset.tag}) installed from GitHub (stock upstream build)`);
-    return { state: fullState(), version: asset.releaseName, tag: asset.tag, source: 'github' };
+    return installUe4ssFromNexus(wanted || Number(nx.fileId));
   },
 
-  // Every UE4SS release that carries a runtime zip, newest build first, plus
-  // the builds kept on this PC (the version swap for frozen game versions).
+  // Settings → UE4SS → Check now: re-read the Nexus page and run the same
+  // update step the hourly check runs (auto-update, hold, or notice).
+  'ue4ss-check': async () => {
+    const outcome = await maybeCheckUe4ss({ force: true });
+    return { state: fullState(), outcome };
+  },
+
+  // The UE4SS versions picker: every runtime file on the Nexus page (main
+  // first, then older uploads), plus the builds kept on this PC.
   'ue4ss-versions': async () => {
-    let releases = [];
-    let releasesError = null;
-    try { releases = await ue4ssDl.listRuntimes(30); } catch (e) { releasesError = e.message; }
+    const nexusLatest = await ue4ssDl.refreshNexusLatest(true);
     const installed = store.settings.ue4ssInstalled || null;
-    const latest = releases.find((r) => r.recommended) || null;
-    const [, nexusLatest] = await Promise.all([latest ? ue4ssDl.refreshLatest(true) : null, ue4ssDl.refreshNexusLatest(true)]);
     const signedIn = nexusSignedIn();
     if (signedIn && !nexusUser) { try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {} }
     const det = steam.detectGame(store.settings.gamePath);
     return {
-      releases, releasesError, installed, status: engine.ue4ssStatus(), vault: engine.ue4ssListVault(),
-      update: ue4ssDl.updateInfo(installed, latest || undefined),
-      nexus: nexusLatest, nexusUrl: ue4ssDl.NEXUS_URL, signedIn, isPremium: !!(nexusUser && nexusUser.isPremium),
+      installed, origin: ue4ssOrigin(), status: engine.ue4ssStatus(), vault: engine.ue4ssListVault(),
+      update: ue4ssDl.updateInfo(installed),
+      nexus: nexusLatest, files: ue4ssDl.cachedNexusFiles(), nexusUrl: ue4ssDl.NEXUS_URL,
+      signedIn, isPremium: !!(nexusUser && nexusUser.isPremium),
       gameBuild: det.found ? det.buildId : null,
     };
   },
 
-  // Put a kept UE4SS build back (the current one is kept first).
+  // Put a kept UE4SS build back (the current one is kept first). The record
+  // follows what the kept build was, so a kept stock build shows the switch
+  // notice again and a kept Nexus file is tracked for updates again.
   'ue4ss-restore': async (_e, { entryId }) => {
     if (!store.settings.gamePath) throw new Error('Locate the game folder in Settings first.');
-    const cur = store.settings.ue4ssInstalled || null;
+    if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+    const cur = currentUe4ssMeta();
     const m = engine.ue4ssRestore(entryId, ue4ssLabel(cur), cur);
-    store.settings.ue4ssInstalled = m.tag || m.asset
-      ? { tag: m.tag || null, name: m.name || m.label, asset: m.asset || null, publishedAt: m.publishedAt || null, installedAt: new Date().toISOString(), restored: true }
-      : null;
+    const at = new Date().toISOString();
+    if (m.source === 'nexus' && m.fileId) {
+      store.settings.ue4ssInstalled = {
+        source: 'nexus', modId: ue4ssDl.NEXUS_MOD_ID, fileId: m.fileId, tag: null, name: ue4ssDl.NEXUS_NAME,
+        version: m.version || null, asset: m.asset || null, publishedAt: m.publishedAt || null,
+        testedBuild: m.testedBuild || null, dllMd5: ue4ssFingerprint().dllMd5 || null, installedAt: at, restored: true,
+      };
+    } else if (m.source === 'github' || m.tag || m.asset) {
+      store.settings.ue4ssInstalled = { source: 'github', tag: m.tag || null, name: m.name || m.label, asset: m.asset || null, publishedAt: m.publishedAt || null, installedAt: at, restored: true };
+    } else {
+      store.settings.ue4ssInstalled = null;
+    }
     store.save();
     log('info', `UE4SS runtime restored from the kept build ${entryId}`);
     return { state: fullState(), label: m.name || m.label };
@@ -2920,46 +2904,133 @@ function spawnGameExe(detection) {
   return child;
 }
 
-// Install the game-specific UE4SS compatibility build from its Nexus page.
-// Premium: direct download. Free: the embedded Nexus page — its Mod Manager
-// Download button hands the file to handleNxm, which recognises the runtime.
-async function installUe4ssFromNexus(fileId) {
-  if (!nexusSignedIn()) throw new Error('Add your Nexus Mods API key in Settings first, or install the GitHub build.');
+// ------------------------------------------------ UE4SS (Nexus mod 9 only)
+
+const GAME_RUNNING_UE4SS = 'Close Star Wars Zero Company first — the running game has UE4SS loaded, so its files cannot be replaced until the game exits.';
+
+function ue4ssFingerprint() {
+  return ue4ssDl.fingerprint(store.settings.gamePath ? path.join(store.settings.gamePath, WIN64_REL) : null);
+}
+
+// Which UE4SS is on disk: { origin: 'none'|'nexus'|'stock'|'unknown', switchable, label, reason, build }.
+function ue4ssOrigin() {
+  if (!store.settings.gamePath) return { origin: 'none', switchable: false, label: 'game not located', reason: null, build: null };
+  return ue4ssDl.classifyInstall(engine.ue4ssStatus(), store.settings.ue4ssInstalled, ue4ssFingerprint(),
+    store.settings.ue4ssNexusFingerprints, store.settings.ue4ssInstalled ? null : mainAppUe4ssRecord());
+}
+
+// The main Mod Command's UE4SS install record for this game (both apps manage
+// the same game folder). Read-only; cached briefly because fullState() asks
+// for the origin on every refresh.
+let mainUe4ssCache = { at: 0, key: null, value: null };
+function mainAppUe4ssRecord() {
+  const key = `${store.settings.gamePath}|${store.storageRoot}`;
+  if (mainUe4ssCache.key === key && Date.now() - mainUe4ssCache.at < 30 * 1000) return mainUe4ssCache.value;
+  let value = null;
+  try { value = storageLib.upstreamUe4ssRecord(store.settings.gamePath, store.storageRoot, upstreamDataDir()); } catch (_) {}
+  mainUe4ssCache = { at: Date.now(), key, value };
+  return value;
+}
+
+// A Nexus build X has no record of (the main Mod Command installed it, or
+// X's record was lost) but recognises by UE4SS.dll's MD5: take the record
+// over, so the update check tracks it from now on.
+function adoptUe4ssRecord(origin) {
+  if (!origin || !origin.adopt || store.settings.ue4ssInstalled) return false;
+  store.settings.ue4ssInstalled = { ...origin.adopt, tag: null, installedAt: new Date().toISOString(), adopted: true };
+  store.save();
+  log('info', `UE4SS: took over the record of ${ue4ssDl.NEXUS_NAME} v${origin.adopt.version || '?'} (Nexus file ${origin.adopt.fileId}, recognised by ${origin.adopt.recognisedBy})`);
+  return true;
+}
+
+// The install record plus what is on disk now, for the vault snapshot.
+function currentUe4ssMeta() {
+  const cur = store.settings.ue4ssInstalled || null;
+  const fp = ue4ssFingerprint();
+  const o = ue4ssOrigin();
+  return { ...(cur || {}), source: o.origin === 'nexus' ? 'nexus' : (cur && cur.source) || (o.origin === 'stock' ? 'stock' : null), dllMd5: fp.dllMd5 || null, name: (cur && cur.name) || (o.origin !== 'none' ? `UE4SS (${o.label}${fp.dllVersion ? `, ${fp.dllVersion}` : ''})` : null) };
+}
+
+// Keep the runtime that is there now, so it can be put back from ⧗ Versions.
+function keepCurrentUe4ss() {
+  const meta = currentUe4ssMeta();
+  const kept = engine.ue4ssSnapshot(ue4ssLabel(meta), meta);
+  if (kept) log('info', `UE4SS runtime kept before replacing it: ${kept}`);
+  return kept;
+}
+
+function ue4ssReportText(r) {
+  if (!r) return 'no report';
+  return `${r.replaced} runtime file(s) written, ${r.retired} old runtime file(s) retired, mods.txt ${r.modsTxt}, settings: ${r.settings}`
+    + `${r.carriedSettings && r.carriedSettings.length ? ` (${r.carriedSettings.join(', ')})` : ''}`
+    + `${r.keptUserMods ? `, ${r.keptUserMods} managed mod folder(s) left alone` : ''}`;
+}
+
+// Install one file of "UE4SS for Star Wars Zero Company" from its Nexus page.
+// Premium: direct download with inline progress. Free: X's one-click — the
+// exact file's download page (embedded panel with the auto-click, or the
+// user's browser); the nxm:// it emits reaches handleNxm, which recognises the
+// runtime.
+async function installUe4ssFromNexus(fileId, { auto = false } = {}) {
+  if (!nexusSignedIn()) throw new Error('Add your Nexus Mods API key in Settings → Nexus Mods first — UE4SS for Star Wars Zero Company is downloaded from Nexus Mods.');
   const token = await nexusAccessToken();
   if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
-  if (!nexusUser.isPremium) return embedDownload(ue4ssDl.NEXUS_MOD_ID, fileId, 'UE4SS for Star Wars Zero Company');
+  // The running game has UE4SS loaded: say so now, before a download that
+  // could not be installed anyway (handleNxm checks again for free accounts).
+  if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+  // Free account: X's one-click — the embedded panel (or the user's own
+  // browser, per "Where to finish free downloads") at this exact file's
+  // download page, queued like every other one-click download; its nxm://
+  // comes back into handleNxm, which recognises the runtime.
+  if (!nexusUser.isPremium) {
+    return {
+      ...embedDownload(ue4ssDl.NEXUS_MOD_ID, fileId, ue4ssDl.NEXUS_NAME),
+      hint: 'Mod Command X installs it when the download starts — your UE4SS mods, mods.txt and settings are kept.',
+    };
+  }
   const files = await nexus.filesList(ue4ssDl.NEXUS_MOD_ID, token);
   const file = files.find((f) => f.file_id === fileId);
   if (!file) throw new Error('That file is no longer listed on the Nexus page.');
-  const cur = store.settings.ue4ssInstalled || null;
-  const kept = engine.ue4ssSnapshot(ue4ssLabel(cur), cur);
-  if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
+  const before = ue4ssOrigin();
+  keepCurrentUe4ss();
   const uri = await nexus.downloadLink({ modId: ue4ssDl.NEXUS_MOD_ID, fileId }, token);
   const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
     sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS (Nexus) ${file.version || ''}`, received: got, total });
   });
+  let result;
   try {
-    const result = await engine.install(dest);
+    result = await engine.install(dest);
     if (result.modType !== 'ue4ss-runtime') throw new Error('The downloaded archive did not contain a UE4SS runtime layout.');
   } finally {
     fs.rmSync(dest, { force: true });
   }
   recordNexusUe4ss({ fileId, version: file.version || null, asset: file.file_name, publishedAt: file.uploaded_timestamp ? new Date(file.uploaded_timestamp * 1000).toISOString() : null });
-  log('info', `UE4SS compatibility build v${file.version || '?'} (Nexus file ${fileId}) installed`);
-  return { state: fullState(), version: `Nexus v${file.version || '?'}`, source: 'nexus' };
+  ue4ssPending = null;
+  const how = auto ? 'updated automatically' : (before.switchable ? `installed, replacing the ${before.label}` : 'installed');
+  log('info', `UE4SS for Star Wars Zero Company v${file.version || '?'} (Nexus file ${fileId}) ${how} — ${ue4ssReportText(result.report)}`);
+  return { state: fullState(), version: `Nexus v${file.version || '?'}`, source: 'nexus', switchedFrom: before.switchable ? before.origin : null, report: result.report || null };
 }
 
 function recordNexusUe4ss({ fileId, version, asset, publishedAt }) {
   // Remember the game build the package states it was tested on, so Settings
   // and Diagnostics can compare it with the installed game even while the Nexus
-  // page is unreachable.
+  // page is unreachable — and UE4SS.dll's MD5, so a UE4SS copied over it later
+  // is noticed, and so this build is recognised by its files if the record is lost.
   const page = ue4ssDl.cachedNexusLatest();
   const testedBuild = page && Number(page.fileId) === Number(fileId) ? (page.testedBuild || null) : null;
+  const dllMd5 = ue4ssFingerprint().dllMd5 || null;
   store.settings.ue4ssInstalled = {
-    source: 'nexus', modId: ue4ssDl.NEXUS_MOD_ID, fileId, tag: null, name: 'UE4SS for Star Wars Zero Company',
-    version: version || null, asset: asset || null, publishedAt: publishedAt || null, testedBuild,
+    source: 'nexus', modId: ue4ssDl.NEXUS_MOD_ID, fileId, tag: null, name: ue4ssDl.NEXUS_NAME,
+    version: version || null, asset: asset || null, publishedAt: publishedAt || null, testedBuild, dllMd5,
     installedAt: new Date().toISOString(),
   };
+  if (dllMd5) {
+    const known = { ...(store.settings.ue4ssNexusFingerprints || {}) };
+    known[dllMd5] = { fileId, version: version || null };
+    const keys = Object.keys(known);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete known[k];
+    store.settings.ue4ssNexusFingerprints = known;
+  }
   store.settings.ue4ssNoticedBuild = String(fileId);
   store.save();
 }
@@ -2967,8 +3038,99 @@ function recordNexusUe4ss({ fileId, version, asset, publishedAt }) {
 // Human label for the runtime build a settings record describes.
 function ue4ssLabel(rec) {
   if (!rec) return 'unknown build';
+  if (rec.source === 'nexus' && rec.version) return `UE4SS for Zero Company v${rec.version}`;
   return (rec.asset && rec.asset.replace(/\.zip$/i, '')) || rec.name || rec.tag || 'unknown build';
 }
+
+// Hourly (and at startup): keep UE4SS current with Nexus mod 9.
+//   - a stock / unknown UE4SS: one notice (per build on disk) offering the switch;
+//   - a Nexus install behind the page's main file: with "Keep UE4SS up to date
+//     automatically" on and a premium account, installed right away while the
+//     game is closed; while it runs, the user is told and it is retried every
+//     five minutes. Otherwise one notice per new file, with the one-click
+//     Update in Settings → UE4SS (free accounts: that click opens the file's
+//     download page through the one-click flow — never unprompted; no API
+//     key: add it first).
+let ue4ssPending = null; // { fileId, version, reason: 'game-running' } while an update is held back
+let ue4ssRetryTimer = null;
+let ue4ssCheckRunning = false;
+async function maybeCheckUe4ss({ force = false } = {}) {
+  if (ue4ssCheckRunning || !store.settings.gamePath) return null;
+  ue4ssCheckRunning = true;
+  try {
+    const nx = await ue4ssDl.refreshNexusLatest(force);
+    let origin = ue4ssOrigin();
+    if (adoptUe4ssRecord(origin)) origin = ue4ssOrigin();
+    if (origin.switchable) {
+      const key = `${origin.origin}:${ue4ssFingerprint().dllMd5 || origin.label}`;
+      if (store.settings.ue4ssSwitchNoticed !== key) {
+        store.settings.ue4ssSwitchNoticed = key;
+        store.save();
+        sendEvent({ type: 'toast', kind: 'warn', message: origin.origin === 'stock'
+          ? 'UE4SS installed is the stock build — switch to the Star Wars Zero Company UE4SS (Nexus) in Settings → UE4SS. Your UE4SS mods, mods.txt and settings are kept.'
+          : 'UE4SS installed is of unknown origin — switch to the Star Wars Zero Company UE4SS (Nexus) in Settings → UE4SS so Mod Command X can keep it up to date.' });
+      }
+      sendEvent({ type: 'state', state: fullState() });
+      return { action: 'switch-notice', origin: origin.origin };
+    }
+    const u = ue4ssDl.updateInfo(store.settings.ue4ssInstalled, nx);
+    if (!nx || origin.origin !== 'nexus' || !u.available) {
+      if (ue4ssPending) ue4ssPending = null;
+      sendEvent({ type: 'state', state: fullState() });
+      return { action: 'none' };
+    }
+    const auto = store.settings.ue4ssAutoUpdate !== false;
+    // At startup the key's account may not be read yet: read it now, so a
+    // premium account is not mistaken for a free one on the first check.
+    if (auto && nexusSignedIn() && !nexusUser) {
+      try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {}
+    }
+    const premium = nexusSignedIn() && !!(nexusUser && nexusUser.isPremium);
+    const noticeOnce = (message, kind = 'warn') => {
+      if (store.settings.ue4ssNoticedBuild === u.latest) return;
+      store.settings.ue4ssNoticedBuild = u.latest;
+      store.save();
+      sendEvent({ type: 'toast', kind, message });
+    };
+    if (auto && premium) {
+      if (steam.isGameRunning(store.settings.gamePath)) {
+        const first = !ue4ssPending || ue4ssPending.fileId !== nx.fileId;
+        ue4ssPending = { fileId: nx.fileId, version: nx.version || null, reason: 'game-running', since: new Date().toISOString() };
+        if (first) {
+          log('info', `UE4SS ${u.latestBuild} is on Nexus — held back while the game is running`);
+          sendEvent({ type: 'toast', kind: 'warn', message: `UE4SS for Star Wars Zero Company ${u.latestBuild} is on Nexus (you have ${u.currentBuild}). Mod Command X will update it as soon as the game is closed.` });
+        }
+        if (ue4ssRetryTimer) clearTimeout(ue4ssRetryTimer);
+        ue4ssRetryTimer = setTimeout(() => { ue4ssRetryTimer = null; if (win && !win.isDestroyed()) maybeCheckUe4ss().catch(() => {}); }, UE4SS_RETRY_MS);
+        if (ue4ssRetryTimer.unref) ue4ssRetryTimer.unref();
+        sendEvent({ type: 'state', state: fullState() });
+        return { action: 'held', reason: 'game-running' };
+      }
+      try {
+        const res = await installUe4ssFromNexus(Number(nx.fileId), { auto: true });
+        store.settings.ue4ssNoticedBuild = u.latest;
+        store.save();
+        sendEvent({ type: 'state', state: res.state || fullState() });
+        sendEvent({ type: 'toast', message: `UE4SS for Star Wars Zero Company was updated automatically to ${u.latestBuild} (from ${u.currentBuild}). Your UE4SS mods, mods.txt and settings were kept; the previous build is in ⧗ Versions.` });
+        return { action: 'updated', version: res.version };
+      } catch (err) {
+        log('error', `UE4SS automatic update failed: ${err.message}`);
+        noticeOnce(`UE4SS ${u.latestBuild} is on Nexus, but the automatic update failed (${err.message}). Update from Settings → UE4SS.`);
+        sendEvent({ type: 'state', state: fullState() });
+        return { action: 'failed', error: err.message };
+      }
+    }
+    noticeOnce(`UE4SS for Star Wars Zero Company ${u.latestBuild} is on Nexus (you have ${u.currentBuild}). `
+      + (!nexusSignedIn() ? 'Add your Nexus Mods API key in Settings → Nexus Mods, then press Update in Settings → UE4SS.'
+        : premium ? 'Press Update in Settings → UE4SS.'
+          : 'Press Update in Settings → UE4SS — Mod Command X opens the file’s download page and starts it for you.'));
+    sendEvent({ type: 'state', state: fullState() });
+    return { action: 'notified' };
+  } finally {
+    ue4ssCheckRunning = false;
+  }
+}
+const UE4SS_RETRY_MS = Number(process.env.ZC_UE4SS_RETRY_MS) > 0 && !app.isPackaged ? Number(process.env.ZC_UE4SS_RETRY_MS) : 5 * 60 * 1000;
 
 async function installPaths(paths) {
   const results = [];
@@ -3028,7 +3190,7 @@ async function installPaths(paths) {
 
 function diagnostics() {
   const items = [];
-  const add = (level, title, message) => items.push({ level, title, message });
+  const add = (level, title, message, fix) => items.push(fix ? { level, title, message, fix } : { level, title, message });
   // Pick up asset lists for IoStore mods installed while retoc was unavailable.
   try {
     const rescanned = engine.refreshPackages();
@@ -3144,28 +3306,34 @@ function diagnostics() {
   }
   const ue4ss = engine.ue4ssStatus();
   {
+    // Which UE4SS is installed — the Star Wars Zero Company build from Nexus,
+    // the stock build, or one of unknown origin — and for the Nexus build,
+    // whether it is current and whether the game build it was tested on is
+    // the one this PC runs. A stock/unknown UE4SS gets the one-click switch.
     const u = ue4ssDl.updateInfo(store.settings.ue4ssInstalled);
     const rec = store.settings.ue4ssInstalled;
-    const fromNexus = u.source === 'nexus';
+    const o = ue4ssOrigin();
     const gameBuild = detection.found ? detection.buildId : null;
-    let tail = '';
-    if (ue4ss.installed && rec) {
-      // Which build, and — for the game-specific package — whether the build it
-      // was tested on is the build this PC is actually running.
-      tail = fromNexus
-        ? ` Installed: the Zero Company package from Nexus${u.currentBuild ? ` ${u.currentBuild}` : ''}.`
-        : ` Installed: GitHub build ${u.currentBuild || rec.asset || rec.name} — stock upstream build, not game-specific.`;
-      const tested = fromNexus ? (rec.testedBuild || (u.nexus && u.nexus.testedBuild) || null) : null;
-      if (tested) {
-        tail += ` Tested on game build ${tested}${gameBuild ? (String(gameBuild) === String(tested) ? ' — matches yours' : ` — yours is ${gameBuild}`) : ''}.`;
-      }
-      if (u.available) tail += ` Newer ${fromNexus ? 'Zero Company package' : 'stock build'} available: ${u.latestBuild} (you have ${u.currentBuild}) — Settings → UE4SS.`;
+    const keeps = ' The switch replaces only UE4SS\'s own files — your ue4ss\\Mods, mods.txt and settings stay.';
+    if (!ue4ss.installed) {
+      add('info', 'UE4SS runtime', `${ue4ss.message} Settings → UE4SS installs “${ue4ssDl.NEXUS_NAME}” from Nexus Mods.`,
+        store.settings.gamePath ? { action: 'ue4ss-install', label: 'Install UE4SS (Nexus)' } : null);
+    } else if (o.origin === 'stock') {
+      add('warning', 'UE4SS runtime', `UE4SS installed is the stock build — switch to the Star Wars Zero Company UE4SS (Nexus). ${o.reason || ''}${keeps}`,
+        { action: 'ue4ss-switch', label: 'Switch to the Nexus build' });
+    } else if (o.origin === 'unknown') {
+      add('warning', 'UE4SS runtime', `UE4SS installed is of unknown origin — switch to the Star Wars Zero Company UE4SS (Nexus) so Mod Command X can keep it up to date. ${o.reason || ''}${keeps}`,
+        { action: 'ue4ss-switch', label: 'Switch to the Nexus build' });
+    } else {
+      let tail = ` Installed: ${ue4ssDl.NEXUS_NAME} from Nexus${o.build ? ` v${o.build}` : ''}.`;
+      const tested = (rec && rec.testedBuild) || (u.nexus && u.nexus.testedBuild) || null;
+      if (tested) tail += ` Tested on game build ${tested}${gameBuild ? (String(gameBuild) === String(tested) ? ' — matches yours' : ` — yours is ${gameBuild}`) : ''}.`;
+      if (u.available) tail += ` Newer file on Nexus: ${u.latestBuild} (you have ${u.currentBuild})${ue4ssPending ? ' — held back while the game is running' : ''}.`;
       else if (u.latest) tail += ' Current.';
-      if (!fromNexus) tail += ' The Zero Company package on Nexus is the tested one — Settings → UE4SS.';
-    } else if (ue4ss.installed) {
-      tail = ' Build unknown (not installed by Mod Command X) — reinstall from Settings → UE4SS to get the Zero Company package from Nexus.';
+      tail += store.settings.ue4ssAutoUpdate !== false ? ' Kept up to date automatically.' : ' Automatic updates are off.';
+      add(u.available ? 'warning' : (ue4ss.healthy ? 'good' : 'warning'), 'UE4SS runtime', ue4ss.message + tail,
+        u.available ? { action: 'ue4ss-update', label: `Update to ${u.latestBuild}` } : null);
     }
-    add(u.available ? 'warning' : (ue4ss.healthy ? 'good' : (ue4ss.installed ? 'warning' : 'info')), 'UE4SS runtime', ue4ss.message + tail);
   }
   const zc = engine.zcsdkStatus();
   if (zc.installed || zc.neededBy.length) {
@@ -3252,7 +3420,7 @@ function buildSupportReport() {
     hookConflicts: hookReport.conflicts,
     duplicates: store.settings.gamePath ? engine.scanDuplicateMods() : [],
     missingDeployed: store.settings.gamePath ? engine.auditDeployedFiles() : [],
-    ue4ssStatus: engine.ue4ssStatus(),
+    ue4ssStatus: (() => { const s = engine.ue4ssStatus(); const o = ue4ssOrigin(); return s.installed ? { ...s, message: `${s.message} (${o.label})` } : s; })(),
     zcsdkStatus: engine.zcsdkStatus(),
     retoc: (() => { const r = engine.retocStatus(); return { ...r, update: retocDl.updateInfo(r.version), installedRecord: store.settings.retocInstalled || null }; })(),
     sevenZip: !!findSevenZip(store.settings.sevenZipPath),
