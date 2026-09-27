@@ -62,7 +62,6 @@ const { ModEngine, compareVersions, MODS_REL, LOGIC_MODS_REL, WIN64_REL, UE4SS_M
 const { findSevenZip, bundledSevenZip } = require('./lib/archive');
 const nexus = require('./lib/nexus');
 const nexusHttp = require('./lib/nexus-http');
-const oauth = require('./lib/nexus-oauth');
 const ue4ssDl = require('./lib/ue4ss');
 const zcsdkRt = require('./lib/zcsdk');
 const retocDl = require('./lib/retoc');
@@ -177,89 +176,69 @@ async function autoRestoreFromArchive() {
   return null;
 }
 
-// ---------------------------------------------------------- Nexus sign-in at rest
-// Nexus Mods' guidelines forbid third-party apps from collecting a user's own
-// credentials, so the app signs the user in with OAuth 2.0 (Authorization Code
-// + PKCE, see lib/nexus-oauth.js) and keeps only the tokens Nexus issues. They are
-// encrypted with the OS user's credentials (DPAPI on Windows) via Electron
-// safeStorage; plaintext is the fallback when the OS store is unavailable.
-// Tokens never reach the renderer and are never written to the log.
+// ---------------------------------------------------------- Nexus API key at rest
+// Mod Command X authenticates with the user's own personal Nexus Mods API key
+// (Settings -> Nexus Mods -> "Get my API key"). It is kept encrypted with the
+// OS user's credentials (DPAPI on Windows) via Electron safeStorage; plaintext
+// is only the fallback when the OS store is unavailable, and a plaintext key is
+// migrated to the encrypted form on startup. The key never reaches the
+// renderer, the log or a diagnostics report. A stored key is never deleted by
+// the app — only the user's own "Clear" removes it.
 
-const SIGN_IN_REQUIRED = 'Sign in to Nexus Mods in Settings first.';
-const SIGN_IN_EXPIRED = 'Your Nexus Mods sign-in expired or was revoked. Sign in again in Settings.';
-const REFRESH_MARGIN_MS = 60 * 1000; // refresh this long before the token lapses
+const KEY_REQUIRED = 'Add your Nexus Mods API key in Settings first.';
 
-let nexusTokens = null; // { access_token, refresh_token, expires_at, obtained_at }
-let nexusRefreshInFlight = null;
-let nexusSignInFlow = null;
-let legacyCredentialsDropped = false;
+// The decrypted key, held in memory so the many sync nexusSignedIn() gates
+// (fullState runs one per state push) do not each go through DPAPI.
+// undefined = not read yet; storeNexusKey/clear reset it.
+let nexusKeyCache;
 
-function loadNexusTokens() {
-  const s = store.settings;
-  let raw = null;
-  if (s.nexusOAuthEncrypted) {
-    try {
-      if (safeStorage.isEncryptionAvailable()) {
-        raw = safeStorage.decryptString(Buffer.from(s.nexusOAuthEncrypted, 'base64'));
-      }
-    } catch (_) { /* wrong OS user / corrupted blob — treat as signed out */ }
-    if (!raw) return null;
-  } else if (s.nexusOAuth) {
-    raw = s.nexusOAuth;
-  }
-  if (!raw) return null;
-  try {
-    const t = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return t && t.access_token ? t : null;
-  } catch (_) { return null; }
+function nexusKey() {
+  if (nexusKeyCache === undefined) nexusKeyCache = readNexusKey();
+  return nexusKeyCache;
 }
 
-function saveNexusTokens(tokens) {
-  if (tokens && safeStorage.isEncryptionAvailable()) {
-    store.settings.nexusOAuthEncrypted = safeStorage.encryptString(JSON.stringify(tokens)).toString('base64');
-    store.settings.nexusOAuth = null;
+function readNexusKey() {
+  const s = store.settings;
+  if (s.nexusApiKeyEncrypted) {
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        return safeStorage.decryptString(Buffer.from(s.nexusApiKeyEncrypted, 'base64'));
+      }
+    } catch (_) { /* wrong OS user / corrupted blob — treat as no key */ }
+    return null;
+  }
+  return s.nexusApiKey || null;
+}
+
+function storeNexusKey(key) {
+  nexusKeyCache = undefined;
+  if (key && safeStorage.isEncryptionAvailable()) {
+    store.settings.nexusApiKeyEncrypted = safeStorage.encryptString(key).toString('base64');
+    store.settings.nexusApiKey = null;
   } else {
-    store.settings.nexusOAuthEncrypted = null;
-    store.settings.nexusOAuth = tokens || null;
+    store.settings.nexusApiKeyEncrypted = null;
+    store.settings.nexusApiKey = key || null;
   }
   store.save();
 }
 
-// A token set fresh from the token endpoint. The access token's RS256 signature
-// is verified against Nexus's public key BEFORE anything it claims (the
-// username, the premium flag) is trusted or stored.
-function applyNexusTokens(fresh) {
-  const next = {
-    access_token: fresh.access_token,
-    // A refresh response may omit the refresh token — keep the one we have.
-    refresh_token: fresh.refresh_token || (nexusTokens && nexusTokens.refresh_token) || null,
-    expires_at: fresh.expires_at,
-    obtained_at: fresh.obtained_at,
-  };
-  const who = oauth.userFromToken(next.access_token); // throws on a token we cannot verify
-  nexusTokens = next;
-  saveNexusTokens(next);
-  nexusUser = {
-    name: who.name,
-    isPremium: who.isPremium,
-    // Until the account's own preferences come back, adult content is hidden.
-    adult: false, adultBlurImages: false, ageVerified: false,
-  };
-  // Every fresh token — sign-in and refresh alike — re-reads the account's
-  // content preferences, so a change made on nexusmods.com lands here.
-  refreshNexusPreferences().catch(() => {});
-  return next;
+function migrateNexusKey() {
+  const s = store.settings;
+  if (s.nexusApiKey && !s.nexusApiKeyEncrypted && safeStorage.isEncryptionAvailable()) {
+    storeNexusKey(s.nexusApiKey);
+  }
 }
 
 // --------------------------------------------------------- adult content
 //
 // THE one place that decides whether adult-tagged mods are listed. There is no
-// in-app opt-in and no way to reach them while signed out: the answer is the
-// signed-in account's own Nexus content preference, which Nexus itself gates
-// behind its age verification. This app never second-guesses it in the other
-// direction, and every listing path (browse, category, search, the featured
-// strip and its backfill, the Link wizard) is handed this answer rather than
-// deciding for itself.
+// in-app opt-in and no way to reach them without a key: the answer is the key
+// owner's own Nexus content preference (v2 GraphQL `preferences { adult }`,
+// read with the API key), which Nexus itself gates behind its age
+// verification. This app never second-guesses it in the other direction, and
+// every listing path (browse, category, search, the featured strip and its
+// backfill, the Link wizard) is handed this answer rather than deciding for
+// itself.
 function adultAllowed() {
   return !!(nexusSignedIn() && nexusUser && nexusUser.adult === true);
 }
@@ -296,135 +275,48 @@ async function refreshNexusPreferences() {
   return prefs;
 }
 
-function nexusSignOutLocal() {
-  nexusTokens = null;
-  nexusUser = null;
-  store.settings.nexusOAuth = null;
-  store.settings.nexusOAuthEncrypted = null;
-  store.save();
+// Validate a key against /users/validate.json (unless the caller just did),
+// then read the account's content preferences with it. Used on Save, on
+// "Verify" and once at startup.
+async function loadNexusUser(key, validated = null) {
+  const who = validated || await nexus.validateKey(key); // throws on a bad key
+  // Adult content stays hidden until the account's own preferences answer.
+  nexusUser = { name: who.name, isPremium: who.isPremium, adult: false, adultBlurImages: false, ageVerified: false };
+  await refreshNexusPreferences();
+  return nexusUser;
 }
 
-// Sync "have we got credentials?" — the presence check every feature gate uses.
+// Compatibility shims — the ~25 call sites that gate features and fetch the
+// credential keep the names they had in the upstream OAuth build:
+//   nexusSignedIn()      sync "have we got a key?"
+//   nexusAccessToken()   the key itself (async), or throws KEY_REQUIRED
+//   withNexusToken(fn)   one call with the key; a key cannot be refreshed, so a
+//                        401 simply surfaces "rejected the API key"
 function nexusSignedIn() {
-  return !!(nexusTokens && nexusTokens.access_token);
+  return !!nexusKey();
 }
 
-async function refreshNexusTokens() {
-  if (nexusRefreshInFlight) return nexusRefreshInFlight;
-  nexusRefreshInFlight = (async () => {
-    if (!nexusTokens || !nexusTokens.refresh_token) {
-      nexusSignOutLocal();
-      throw new Error(SIGN_IN_EXPIRED);
-    }
-    let fresh;
-    try {
-      fresh = await oauth.refreshTokens(nexusTokens.refresh_token);
-    } catch (err) {
-      // A 4xx means the grant is gone — the user revoked the app on their
-      // Nexus account page, or the refresh token lapsed. That is a sign-out.
-      if (err && err.revoked) {
-        log('info', 'nexus sign-in: the refresh grant was refused — signed out');
-        nexusSignOutLocal();
-        sendEvent({ type: 'state', state: fullState() });
-        throw new Error(SIGN_IN_EXPIRED);
-      }
-      throw err;
-    }
-    log('info', 'nexus sign-in: access token refreshed');
-    return applyNexusTokens(fresh);
-  })();
-  const flow = nexusRefreshInFlight;
-  flow.catch(() => {}).then(() => { if (nexusRefreshInFlight === flow) nexusRefreshInFlight = null; });
-  return flow;
-}
-
-// The async counterpart to nexusSignedIn(): a usable access token, refreshed
-// proactively when the current one is about to lapse.
 async function nexusAccessToken() {
-  if (!nexusSignedIn()) throw new Error(SIGN_IN_REQUIRED);
-  if (nexusTokens.expires_at && Date.now() >= nexusTokens.expires_at - REFRESH_MARGIN_MS) {
-    await refreshNexusTokens();
-  }
-  return nexusTokens.access_token;
+  const key = nexusKey();
+  if (!key) throw new Error(KEY_REQUIRED);
+  return key;
 }
 
-// One Nexus API call with a live token; a 401 buys exactly one refresh + retry.
 async function withNexusToken(fn) {
-  const token = await nexusAccessToken();
-  try {
-    return await fn(token);
-  } catch (err) {
-    if (!err || !err.nexusUnauthorized) throw err;
-    const fresh = await refreshNexusTokens();
-    return fn(fresh.access_token);
-  }
-}
-
-// Settings that builds before the OAuth sign-in wrote: the user's own stored
-// Nexus credential, plaintext and OS-encrypted. Names only — nothing in this
-// app reads, sends or migrates them; they exist here solely so the values can
-// be deleted off disk. Spelled through a shared prefix so a search of the
-// source for the old credential name finds no live use anywhere.
-const LEGACY_NEXUS_PREFIX = 'nexusApi';
-const LEGACY_NEXUS_SETTING_KEYS = [`${LEGACY_NEXUS_PREFIX}Key`, `${LEGACY_NEXUS_PREFIX}KeyEncrypted`];
-
-// Startup: a credential left behind by an older build is DROPPED, never
-// migrated and never used. The renderer is told once, so a user whose
-// downloads suddenly ask for a sign-in learns why.
-function dropLegacyNexusCredentials() {
-  const s = store.settings;
-  const had = LEGACY_NEXUS_SETTING_KEYS.some((k) => !!s[k]);
-  let present = false;
-  for (const k of LEGACY_NEXUS_SETTING_KEYS) {
-    if (k in s) { present = true; delete s[k]; }
-  }
-  if (present) store.save();
-  if (had) log('info', 'dropped a Nexus credential left by an older build — the app signs in with OAuth now');
-  return had;
+  return fn(await nexusAccessToken());
 }
 
 function initNexusAuth() {
-  legacyCredentialsDropped = dropLegacyNexusCredentials();
-  nexusTokens = loadNexusTokens();
-  if (!nexusTokens) return;
-  // Name and premium status come from the token itself (expiry is ignored here:
-  // a lapsed token is still proof of who signed in, and the next API call
-  // refreshes it). A token we cannot verify is refused outright.
-  try {
-    const who = oauth.userFromToken(nexusTokens.access_token, { ignoreExpiry: true });
-    // Adult content stays hidden until the account's own preferences answer.
-    nexusUser = { name: who.name, isPremium: who.isPremium, adult: false, adultBlurImages: false, ageVerified: false };
-    refreshNexusPreferences().catch(() => {});
-  } catch (err) {
-    log('error', `stored Nexus access token failed verification (${err.message}) — signed out`);
-    nexusSignOutLocal();
-  }
-}
-
-// The whole browser round trip: listen on loopback, open the authorization page
-// in the system browser, wait for the callback, swap the code for tokens. A
-// second call while one is pending joins the pending flow.
-function nexusSignIn() {
-  if (nexusSignInFlow) return nexusSignInFlow;
-  const flow = (async () => {
-    const verifier = oauth.makeVerifier();
-    const state = oauth.randomState();
-    const server = await oauth.startCallbackServer({ state });
-    try {
-      const url = oauth.buildAuthorizeUrl({ state, codeChallenge: oauth.challengeFor(verifier) });
-      log('info', `nexus sign-in: listening on ${server.redirectUri}, opening the authorization page in the browser`);
-      await shell.openExternal(url);
-      const { code } = await server.result;
-      applyNexusTokens(await oauth.exchangeCode({ code, codeVerifier: verifier }));
-      log('info', `nexus sign-in: signed in as ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}`);
-      return fullState();
-    } finally {
-      server.close();
-    }
-  })();
-  nexusSignInFlow = flow;
-  flow.catch(() => {}).then(() => { if (nexusSignInFlow === flow) nexusSignInFlow = null; });
-  return flow;
+  try { migrateNexusKey(); } catch (_) {}
+  const key = nexusKey();
+  if (!key) return;
+  // Who the key belongs to (name, premium) comes from validate.json. Offline or
+  // a rejected key just leaves nexusUser empty — the key is KEPT either way;
+  // the next call that needs the user retries, and Settings shows the error.
+  loadNexusUser(key).then((u) => {
+    log('info', `nexus: API key belongs to ${u.name}${u.isPremium ? ' (premium)' : ''}`);
+    try { sendEvent({ type: 'state', state: fullState() }); } catch (_) {}
+  }).catch((err) => log('info', `nexus: stored API key could not be validated at startup (${err.message})`));
 }
 
 // ---------------------------------------------------------- single instance / nxm
@@ -838,9 +730,9 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   log('info', `app start v${app.getVersion()} on ${process.platform} ${require('os').release()}`);
-  // Load the stored OAuth tokens — and throw away any credential an older
-  // build left behind.
-  try { initNexusAuth(); } catch (err) { log('error', `Nexus sign-in state could not be read: ${err.message}`); }
+  // Load the stored Nexus API key (migrating a plaintext one to the OS store)
+  // and look up who it belongs to in the background.
+  try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
   // Archive lives in the game folder (or the custom location) — migrate any
   // app-side content there, then restore from it when this store is fresh.
   try { ensureStorage(); } catch (err) { log('error', `archive setup failed: ${err.message}`); }
@@ -859,15 +751,6 @@ app.whenReady().then(() => {
     }
   }
   createWindow();
-  // One-time explanation for anyone upgrading from a build that stored a
-  // credential of its own.
-  if (legacyCredentialsDropped) {
-    win.webContents.once('did-finish-load', () => sendEvent({
-      type: 'toast',
-      kind: 'warn',
-      message: 'Nexus Mods sign-in has changed. Sign in with your Nexus account in Settings to restore downloads and update checks.',
-    }));
-  }
   // Handle an nxm:// link this instance was launched with.
   const url = nxmFromArgv(process.argv);
   if (url) win.webContents.once('did-finish-load', () => handleNxm(url));
@@ -1074,7 +957,7 @@ app.on('window-all-closed', () => app.quit());
 
 // ------------------------------------------------------------------ helpers
 
-// { name, isPremium } from the verified access token (or /users/validate.json),
+// { name, isPremium } from /users/validate.json for the stored API key,
 // plus { adult, adultBlurImages, ageVerified } from the account's own Nexus
 // content preferences. adult/adultBlurImages reach the renderer in
 // fullState().nexus.user; the policy itself lives in adultAllowed().
@@ -1103,15 +986,18 @@ function fullState() {
   const modCompat = {};
   for (const m of store.mods) modCompat[m.id] = ea.evaluateMod(m, compat);
   return {
-    // Tokens NEVER cross into the renderer — only whether we have them.
-    settings: { ...store.settings, nexusOAuth: undefined, nexusOAuthEncrypted: undefined },
+    // The API key NEVER crosses into the renderer — only whether we have one.
+    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined, hasNexusKey: nexusSignedIn() },
     profiles: store.profiles,
     lastOrderBackup: store.data.lastOrderBackup
       ? { at: store.data.lastOrderBackup.at }
       : null,
     nexus: {
-      signedIn: nexusSignedIn(),
-      tokensEncrypted: !!store.settings.nexusOAuthEncrypted,
+      hasKey: nexusSignedIn(),
+      keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
+      // Premium drives the premium-vs-free download split; it is only known
+      // once validate.json has answered for the stored key.
+      premium: !!(nexusUser && nexusUser.isPremium),
       user: nexusUser ? {
         name: nexusUser.name,
         isPremium: !!nexusUser.isPremium,
@@ -1373,7 +1259,7 @@ function authorFromName(name) {
   return m ? m[1].trim() : null;
 }
 // Does any of this Nexus mod's files stem-match the local name? Best-effort
-// (v1 filesList needs a sign-in; any failure = no match); memoised per run so the
+// (v1 filesList needs an API key; any failure = no match); memoised per run so the
 // same mod is never fetched twice while one scan/search is underway.
 async function modHasMatchingFile(modId, localName, cache) {
   if (!nexusSignedIn()) return false;
@@ -1457,6 +1343,11 @@ const handlers = {
 
   'save-settings': async (_e, patch) => {
     delete patch.promotedAuthors; // owner-controlled (lib/featured.js), not a user setting
+    // The API key only changes through set-nexus-key / clear-nexus-key (which
+    // validate and encrypt it); a settings patch can never write or blank it.
+    delete patch.nexusApiKey;
+    delete patch.nexusApiKeyEncrypted;
+    delete patch.hasNexusKey;
     Object.assign(store.settings, patch);
     store.save();
     return fullState();
@@ -1618,30 +1509,38 @@ const handlers = {
   },
   'delete-profile': async (_e, { id }) => { engine.deleteProfile(id); return fullState(); },
 
-  // OAuth sign-in: opens nexusmods.com in the user's own browser and waits for
-  // the loopback callback. The app never sees the password, only the tokens.
-  'nexus-sign-in': async () => nexusSignIn(),
-
-  'nexus-sign-out': async () => {
-    const tokens = nexusTokens;
-    nexusSignOutLocal();
-    if (tokens) {
-      // Best-effort — a revoke that fails must never leave the user signed in here.
-      try { await oauth.revoke(tokens.refresh_token); } catch (_) {}
-      try { await oauth.revoke(tokens.access_token); } catch (_) {}
-    }
-    log('info', 'nexus sign-in: signed out (tokens cleared and revocation requested)');
+  // Save a personal API key: trimmed, proven against /users/validate.json, and
+  // only THEN stored — a key Nexus refuses is never written to disk.
+  'set-nexus-key': async (_e, { key } = {}) => {
+    const trimmed = String(key || '').trim();
+    if (!trimmed) throw new Error('The API key is empty.');
+    const who = await nexus.validateKey(trimmed); // throws "rejected the API key" on a bad one
+    storeNexusKey(trimmed);
+    await loadNexusUser(trimmed, who);
+    promotedCache.mods = null; // the adult answer may have changed
+    log('info', `nexus: API key saved for ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}${store.settings.nexusApiKeyEncrypted ? ' (encrypted)' : ' (plaintext — OS store unavailable)'}`);
+    return fullState();
+  },
+  // The user's own "Clear" — the only way a stored key is ever removed.
+  'clear-nexus-key': async () => {
+    storeNexusKey(null);
+    nexusUser = null;
+    promotedCache.mods = null;
+    log('info', 'nexus: API key cleared');
+    return fullState();
+  },
+  'validate-nexus-key': async () => {
+    await loadNexusUser(await nexusAccessToken());
     return fullState();
   },
 
   // What Nexus's rate-limit headers last reported, for Settings.
   'nexus-quota': async () => compactQuota(),
 
-  // "Verify": ask the API itself who this token belongs to, and re-read the
+  // "Verify": ask the API itself who this key belongs to, and re-read the
   // account's content preferences while we are there.
   'nexus-refresh-user': async () => {
-    mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t)));
-    await refreshNexusPreferences();
+    await loadNexusUser(await nexusAccessToken());
     return fullState();
   },
   'register-nxm': async () => {
@@ -1689,20 +1588,20 @@ const handlers = {
   },
 
   'nexus-browse': async (_e, opts) => {
-    // Browsing itself needs no sign-in. Whether adult-tagged mods are in the
+    // Browsing itself needs no API key. Whether adult-tagged mods are in the
     // listing is NEVER the renderer's call: adultAllowed() decides, and any
     // includeAdult that arrived from the renderer is discarded here.
     const result = await nexus.browseMods({ ...(opts || {}), includeAdult: adultAllowed() });
     // Premium accounts can pull download links straight from the API.
     if (nexusSignedIn() && !nexusUser) {
-      try { mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t))); } catch (_) {}
+      try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {}
     }
     return { ...result, signedIn: nexusSignedIn(), isPremium: !!(nexusUser && nexusUser.isPremium) };
   },
 
   'nexus-promoted': async () => {
     // Session cache — the featured pool rarely changes. It is also keyed on
-    // the adult answer, so signing in or out never serves a stale mix.
+    // the adult answer, so saving or clearing the key never serves a stale mix.
     const now = Date.now();
     const adult = adultAllowed();
     if (promotedCache.mods && promotedCache.adult === adult && now - promotedCache.at < 5 * 60 * 1000) return promotedCache;
@@ -1724,7 +1623,7 @@ const handlers = {
   'nexus-install-remote': async (_e, { modId, name }) => {
     const token = await nexusAccessToken();
     if (!nexusUser) {
-      try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); }
+      try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); }
     }
     if (!nexusUser.isPremium) {
       // Nexus policy: non-premium downloads must start on the website. Rather
@@ -1906,13 +1805,13 @@ const handlers = {
         sizeKb: f.size_kb || f.size || 0,
         uploaded: f.uploaded_timestamp ? new Date(f.uploaded_timestamp * 1000).toISOString() : null,
       }));
-    if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (_) {} }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (_) {} }
     return { files: usable, isPremium: !!(nexusUser && nexusUser.isPremium) };
   },
 
   'nexus-install-file': async (_e, { modId, fileId, name }) => {
     const token = await nexusAccessToken();
-    if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); } }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
     if (!nexusUser.isPremium) {
       // Free accounts: the website mints the link. Open the mod's Files page in
       // the embedded Nexus panel; the nxm handoff installs the file the user
@@ -1988,7 +1887,7 @@ const handlers = {
         description: plainText(f.description),
         installedAs: installedAs(f.file_id),
       }));
-    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (_) {} }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (_) {} }
     return {
       mod: { name: modName || (parent ? parent.name : `mod ${modId}`) },
       parentId: parent ? parent.id : null,
@@ -2003,7 +1902,7 @@ const handlers = {
   // handleNxm (same planNexusInstall rules).
   'nexus-install-optional': async (_e, { modId, fileId, parentId }) => {
     const token = await nexusAccessToken();
-    if (!nexusUser) { try { nexusUser = await nexus.validateToken(token); } catch (err) { throw new Error(err.message); } }
+    if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
     const parentMod = parentId ? store.getMod(parentId) : null;
     if (!nexusUser.isPremium) {
       return {
@@ -2065,7 +1964,7 @@ const handlers = {
   // themselves can be grouped under another installed mod, and from then on it
   // looks and behaves exactly like an optional file off a mod page: nested row,
   // own switch, off when the parent is off, gone when the parent is uninstalled.
-  // Purely local bookkeeping — no Nexus call, no sign-in.
+  // Purely local bookkeeping — no Nexus call, no API key.
 
   // Which installed mods may be grouped under this one.
   'groupable-mods': async (_e, { parentId }) => {
@@ -2154,7 +2053,7 @@ const handlers = {
       suggestions.push({ id: m.id, name: m.name, modType: m.modType, candidates: candidates.slice(0, 5) });
     }
     const withCands = suggestions.filter((s) => s.candidates.length).length;
-    log('info', `link-mods: ${withCands}/${total} unlinked mod(s) have candidate source(s)${signedIn ? '' : ' (signed out — linking needs a Nexus sign-in)'}`);
+    log('info', `link-mods: ${withCands}/${total} unlinked mod(s) have candidate source(s)${signedIn ? '' : ' (no API key — linking needs a Nexus API key)'}`);
     return { checked: total, signedIn, suggestions, state: fullState() };
   },
 
@@ -2333,8 +2232,8 @@ const handlers = {
   //
   // Default result, by account: premium → downloaded and installed here; free →
   // { opened:'embed', url, name, hint } for the embedded Nexus page (its "Mod
-  // Manager Download" comes back as nxm:// into handleNxm); signed out →
-  // { needsChoice, nexus, github } so the renderer can offer the sign-in or the
+  // Manager Download" comes back as nxm:// into handleNxm); no API key →
+  // { needsChoice, nexus, github } so the renderer can offer adding a key or the
   // stock build.
   'install-ue4ss': async (_e, payload) => {
     if (!store.settings.gamePath) throw new Error('Locate the game folder in Settings first.');
@@ -2400,7 +2299,7 @@ const handlers = {
     const latest = releases.find((r) => r.recommended) || null;
     const [, nexusLatest] = await Promise.all([latest ? ue4ssDl.refreshLatest(true) : null, ue4ssDl.refreshNexusLatest(true)]);
     const signedIn = nexusSignedIn();
-    if (signedIn && !nexusUser) { try { mergeNexusUser(await withNexusToken((t) => nexus.validateToken(t))); } catch (_) {} }
+    if (signedIn && !nexusUser) { try { mergeNexusUser(await withNexusToken((t) => nexus.validateKey(t))); } catch (_) {} }
     const det = steam.detectGame(store.settings.gamePath);
     return {
       releases, releasesError, installed, status: engine.ue4ssStatus(), vault: engine.ue4ssListVault(),
@@ -2513,9 +2412,9 @@ function spawnGameExe(detection) {
 // Premium: direct download. Free: the embedded Nexus page — its Mod Manager
 // Download button hands the file to handleNxm, which recognises the runtime.
 async function installUe4ssFromNexus(fileId) {
-  if (!nexusSignedIn()) throw new Error('Sign in to Nexus Mods in Settings first, or install the GitHub build.');
+  if (!nexusSignedIn()) throw new Error('Add your Nexus Mods API key in Settings first, or install the GitHub build.');
   const token = await nexusAccessToken();
-  if (!nexusUser) { try { mergeNexusUser(await nexus.validateToken(token)); } catch (err) { throw new Error(err.message); } }
+  if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
   if (!nexusUser.isPremium) {
     return {
       opened: 'embed', url: ue4ssDl.NEXUS_URL, name: 'UE4SS for Star Wars Zero Company',
@@ -2835,9 +2734,10 @@ function buildSupportReport() {
     generatedAt: new Date().toISOString(),
     detection,
     eaAppPresent: eaAppDetected,
-    settings: store.settings,
-    nexusSignedIn: nexusSignedIn(),
-    nexusTokensEncrypted: !!store.settings.nexusOAuthEncrypted,
+    // The key itself never enters the report — not even encrypted.
+    settings: { ...store.settings, nexusApiKey: undefined, nexusApiKeyEncrypted: undefined },
+    hasNexusKey: nexusSignedIn(),
+    keyEncrypted: !!store.settings.nexusApiKeyEncrypted,
     mods: store.mods,
     modCompat,
     conflicts,
