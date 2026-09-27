@@ -329,6 +329,10 @@ from upstream, before its release)*
 - Restoring the oldest kept build no longer removes it from ⧗ Versions before
   it is put back.
 
+**Bundled tools**
+- The Oodle DLL (`oo2core_9_win64.dll`) is no longer bundled with retoc.
+  Conflict detection is unaffected: listing a mod's containers does not need it.
+
 ---
 
 # Inherited history — Zero Company Mod Command up to 1.9.14

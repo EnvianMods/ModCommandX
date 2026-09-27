@@ -42,7 +42,11 @@
     "extraResources": [
       {
         "from": "tools",
-        "to": "tools"
+        "to": "tools",
+        "filter": [
+          "**/*",
+          "!oo2core*.dll"
+        ]
       },
       {
         "from": "build/uninstaller",

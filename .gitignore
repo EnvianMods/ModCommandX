@@ -27,3 +27,6 @@ HANDOFF.md
 build/uninstaller/bin/
 build/uninstaller/obj/
 /Uninstall Mod Command X.exe
+
+# Epic/RAD's Oodle dll is not ours to redistribute - never bundle it
+tools/oo2core*.dll
