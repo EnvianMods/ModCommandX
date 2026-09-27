@@ -1092,6 +1092,23 @@ function currentTheme() {
 }
 ipcMain.on('theme-sync', (e) => { e.returnValue = currentTheme(); });
 
+// Startup work that waits for the window's first page load runs, in the order
+// it was queued, from ONE did-finish-load listener (createWindow). A once()
+// per task put 11 listeners on the window's webContents — Node's
+// MaxListenersExceededWarning at every start. A task that throws or rejects
+// is logged and never stops the ones after it.
+const windowLoadTasks = [];
+function onWindowLoad(fn) { windowLoadTasks.push(fn); }
+function runWindowLoadTasks() {
+  const failed = (err) => log('error', `startup task failed: ${err && err.message ? err.message : err}`);
+  for (const fn of windowLoadTasks.splice(0)) {
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch(failed);
+    } catch (err) { failed(err); }
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -1116,7 +1133,8 @@ function createWindow() {
   // The Nexus panel's navigations and worker requests carry the same Sec-CH-UA
   // client hints Chrome sends (read from this window's own Chromium; see
   // lib/nexus-browser.js).
-  win.webContents.once('did-finish-load', () => { learnClientHints(win.webContents); });
+  win.webContents.once('did-finish-load', runWindowLoadTasks);
+  onWindowLoad(() => { learnClientHints(win.webContents); });
 
   // The SDK link hosts a WebContentsView inside THIS window, so it can only be
   // configured once the window exists. Linking itself is deferred to the
@@ -1244,25 +1262,25 @@ app.whenReady().then(() => {
     }
   }
   createWindow();
-  win.webContents.once('did-finish-load', () => {
+  onWindowLoad(() => {
     windowLoaded = true;
     for (const n of archiveNotices.splice(0)) sendEvent({ type: 'toast', kind: n.kind || 'info', message: n.message });
   });
   // Handle an nxm:// link this instance was launched with.
   const url = nxmFromArgv(process.argv);
-  if (url) win.webContents.once('did-finish-load', () => handleNxm(url));
+  if (url) onWindowLoad(() => handleNxm(url));
   // Launcher self-update banner — and, from the same file, where to GET the
   // Mod SDK (refreshLauncherUpdate persists the `sdk` block and pushes it to
   // the renderer). Re-run hourly, the same cadence as every other check, so a
   // link the operator flips lands without a restart.
-  win.webContents.once('did-finish-load', () => refreshLauncherUpdate({ banner: true }).catch(() => {}));
+  onWindowLoad(() => refreshLauncherUpdate({ banner: true }).catch(() => {}));
   setInterval(() => {
     if (win && !win.isDestroyed()) refreshLauncherUpdate({ force: true, banner: true }).catch(() => {});
   }, UPDATE_CHECK_MS);
   // ZCSDK Runtime: learn the newest GitHub release (the Settings card and the
   // install path use it); nudge once per version when an installed runtime is
   // behind it.
-  win.webContents.once('did-finish-load', async () => {
+  onWindowLoad(async () => {
     const remote = await zcsdkRt.latestRuntime();
     if (!remote) return;
     const st = engine.zcsdkStatus();
@@ -1277,7 +1295,7 @@ app.whenReady().then(() => {
   // UE4SS for Star Wars Zero Company (Nexus mod 9): at startup and hourly,
   // the same cadence as every other check. Updates itself when that is on and
   // possible, otherwise says so; a stock/unknown UE4SS gets the switch notice.
-  win.webContents.once('did-finish-load', async () => {
+  onWindowLoad(async () => {
     maybeCheckUe4ss().catch(() => {});
     await retocDl.refreshLatest();
     const ru = retocDl.updateInfo(engine.retocStatus().version);
@@ -1292,7 +1310,7 @@ app.whenReady().then(() => {
   // re-install-and-prune auto-restore would give the main Mod Command's
   // stored copies new ids and delete the originals it still uses.)
   setInterval(() => { if (win && !win.isDestroyed()) maybeCheckUe4ss().catch(() => {}); }, UPDATE_CHECK_MS);
-  win.webContents.once('did-finish-load', async () => {
+  onWindowLoad(async () => {
     // One-time automatic existing-mods scan after the first game connection —
     // the review dialog opens by itself when there is anything to adopt.
     if (!store.settings.firstScanDone && store.settings.gamePath) {
@@ -1313,7 +1331,7 @@ app.whenReady().then(() => {
   });
   // Re-assert an update freeze the user turned on (Steam may have rewritten
   // the manifest while it was briefly writable, e.g. during a verify).
-  win.webContents.once('did-finish-load', () => {
+  onWindowLoad(() => {
     if (!store.settings.updateFreeze || !store.settings.gamePath) return;
     try {
       const status = steam.updateFreezeStatus(store.settings.gamePath);
@@ -1325,7 +1343,7 @@ app.whenReady().then(() => {
     } catch (_) {}
   });
   // Startup recovery: redeploy enabled mods whose deployed files went missing.
-  win.webContents.once('did-finish-load', () => {
+  onWindowLoad(() => {
     if (!store.settings.gamePath) return;
     try {
       const repaired = engine.repairDeployments();
@@ -1340,12 +1358,12 @@ app.whenReady().then(() => {
   // hour old, then every hour while the app stays open (one Nexus files call
   // per linked mod, one GitHub call per GitHub-linked mod). The Hangar's
   // "Check updates" button runs the same check on demand.
-  win.webContents.once('did-finish-load', () => maybeCheckUpdates());
+  onWindowLoad(() => maybeCheckUpdates());
   setInterval(() => { if (win && !win.isDestroyed()) maybeCheckUpdates(); }, UPDATE_CHECK_MS);
   // The linked SDK's own update check, on the SAME hourly cadence and with
   // the same 60-minute cache. One small JSON fetch, only when an SDK is
   // linked, and a failure is a state ('unknown'), never a toast.
-  win.webContents.once('did-finish-load', () => maybeCheckSdkUpdate());
+  onWindowLoad(() => maybeCheckSdkUpdate());
   setInterval(() => { if (win && !win.isDestroyed()) maybeCheckSdkUpdate(); }, UPDATE_CHECK_MS);
 });
 
