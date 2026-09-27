@@ -8,7 +8,7 @@ github.com/EnvianMods/ModCommandX. Numbering restarts at 1.0.0; the upstream
 feature level it carries is recorded as `modCommandCompat: 1.9.14` in
 package.json (the version Mod SDK manifests are checked against).
 
-**Its own identity — installs side by side and shares nothing**
+**Its own identity — installs side by side, shares only the mod archive**
 - Named Mod Command X everywhere: window, dialogs, the portable
   `ModCommandX.exe` (unpacked to `%TEMP%\ModCommandX`), the AppImage, the
   support-report file name and the `nxm://` handler's friendly names (Linux:
@@ -18,10 +18,29 @@ package.json (the version Mod SDK manifests are checked against).
   embedded-Nexus cookies, separate caches. The upstream app's
   `ZeroCompanyModCommand` data (and its older `ZeroCompanyModCommand-data`)
   is never migrated.
-- Own game-side archive, `<game>\ModCommandXArchive`. The upstream
-  `ModCommandArchive` / `ZeroCompanyModArchive` are never auto-restored,
-  renamed, merged or deleted; importing from them is a deliberate Import
-  existing → "Import from a manager folder…", which copies.
+- **One mod archive with Mod Command: `<game>\ModCommandArchive`.** X uses the
+  upstream app's own archive folder, so each mod is stored once:
+  - On start X adopts the mods Mod Command installed (from the archive mirror
+    and, read-only, Mod Command's own manifest) in place — the same
+    `library/<id>`, no copies; only mod records, never its settings or
+    credentials. Enabled state follows what is actually deployed in the game.
+  - The mirror is merged, not overwritten: Mod Command's records, settings
+    block and profiles are kept as written; X adds its records and a
+    `modCommandX` block Mod Command 1.9.14 ignores (verified against 1.9.14: an
+    existing install keeps all its mods; a fresh one restores X's mods too).
+  - Uninstalling in X keeps a stored copy Mod Command still uses (toast), and
+    deletes X-only ones. Uninstalling in Mod Command removes the copy for X as
+    well: X marks the mod "stored copy missing" (re-download or uninstall),
+    and X follows a mod Mod Command re-installed under a new id.
+  - Updating a shared mod in X stores the new version under a new id; Mod
+    Command's copy stays.
+  - X's earlier `<game>\ModCommandXArchive` is folded in on first start
+    (copy-verify-delete, never clobbering; an id collision keeps both, X's
+    under a new id) and removed once empty; one toast summarises it.
+  - A banner warns while Mod Command is running — don't run both at once.
+  - The old re-install-and-prune auto-restore is gone (on a shared archive it
+    would have renumbered and deleted Mod Command's stored copies).
+  - The pre-1.9.0 `ZeroCompanyModArchive` is left to Mod Command.
 - Identifies itself to Nexus Mods as `Mod Command X` (User-Agent
   `ModCommandX/<version> (+github.com/EnvianMods/ModCommandX)`).
 - Update check reads the latest GitHub release of EnvianMods/ModCommandX
@@ -32,8 +51,8 @@ package.json (the version Mod SDK manifests are checked against).
 - Owner tools publish only to EnvianMods/ModCommandX and
   EnvianMods/ModCommandXArchive and refuse the upstream repos; the tools that
   write shared upstream files or upload to Nexus are removed.
-- Running X and the upstream app against the same game install at the same
-  time is not supported: both deploy into the same game mod folders.
+- Running X and the upstream app at the same time is not supported: they
+  share the mod archive and deploy into the same game mod folders.
 
 **Nexus Mods: personal API key instead of OAuth sign-in**
 - Settings → Nexus Mods and first-run setup step 2 take your personal API key
