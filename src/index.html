@@ -331,6 +331,13 @@
               </div>
               <button class="btn ghost" data-url="https://www.nexusmods.com/games/starwarszerocompany/mods">Open Nexus Mods ↗</button>
             </div>
+            <label class="setting-row toggle-row">
+              <div class="setting-info">
+                <span class="setting-name">Auto-click Nexus download for free accounts</span>
+                <p class="setting-note dim">Free accounts must start downloads on the Nexus website. Every install and update button opens the file’s own download page in the Nexus panel; with this on, Mod Command X presses <b>Slow download</b> for you as soon as Nexus enables it. The page stays visible, Nexus’s wait is never skipped, and bot checks are always left to you. Off, the panel only opens at the file.</p>
+              </div>
+              <input type="checkbox" id="chk-autoclick-nexus" class="switch" />
+            </label>
           </div>
         </div>
 
@@ -529,9 +536,10 @@
   </div>
 
   <!-- ============ NEXUS DOWNLOAD (embedded, faithful) ============ -->
-  <!-- Free Nexus accounts can't get download links via the API, so the mod's
-       real Files page is embedded here; the user presses "Mod Manager Download"
-       and the emitted nxm:// link is caught in the main process (see main.js
+  <!-- Free Nexus accounts can't get download links via the API, so the real
+       Nexus page of the exact file is embedded here; "Slow download" (pressed
+       by src/nexus-autoclick.js once the site enables it, or by the user) emits
+       an nxm:// link that is caught in the main process (see main.js
        web-contents-created) and installed. The page is rendered faithfully. -->
   <div id="nexus-dl-modal" class="nexus-dl-modal hidden">
     <div class="nexus-dl-shell">
@@ -545,17 +553,19 @@
         </div>
         <div class="nexus-dl-actions">
           <button id="nexus-dl-account" class="nexus-dl-account" title="Sign in to Nexus Mods so downloads work">◈ Sign in to Nexus</button>
-          <span id="nexus-dl-status" class="nexus-dl-pill">Awaiting “Mod Manager Download”</span>
+          <span id="nexus-dl-status" class="nexus-dl-pill">Awaiting download</span>
+          <button id="nexus-dl-queue" class="btn ghost tiny hidden" title="Cancel the downloads waiting behind this one">0 queued ✕</button>
           <button id="nexus-dl-reload" class="btn ghost tiny" title="Reload the page">⟳ Reload</button>
           <button id="nexus-dl-ext" class="btn ghost tiny" title="Open in your system browser instead">↗ Browser</button>
           <button class="btn tiny" data-close-modal="nexus-dl-modal">✕ Close</button>
         </div>
       </div>
       <div class="nexus-dl-hint">
-        You’re on the real Nexus Mods page, inside Mod Command X. Sign in if asked, then press the
-        mod’s <b>Mod Manager Download</b> button — the file installs here automatically. Free
-        accounts begin on the website; that’s normal.
+        You’re on the real Nexus Mods page, inside Mod Command X, at the exact file you picked. Sign in
+        if asked; the <b>Slow download</b> button hands the file to Mod Command X and it installs here
+        automatically. Free accounts begin on the website — that’s Nexus’s rule, and its wait applies.
       </div>
+      <div id="nexus-dl-auto" class="nexus-dl-auto hidden" role="status" aria-live="polite"></div>
       <webview id="nexus-dl-view" class="nexus-dl-view" partition="persist:nexus" allowpopups src="about:blank"></webview>
       <div id="nexus-dl-progress" class="nexus-dl-progress hidden">
         <span id="nexus-dl-progress-label" class="nexus-dl-progress-label">Downloading…</span>
@@ -835,6 +845,7 @@
     <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
   </div>
 
+  <script src="nexus-autoclick.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

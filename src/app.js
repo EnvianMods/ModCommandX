@@ -54,6 +54,38 @@ async function call(fn, ...args) {
   return res.data;
 }
 
+// Inline download progress on the button that started it. main.js tags every
+// download's progress event with a key — nexus:<modId>[:<fileId>], ue4ss,
+// github:<repo> — and a button registered for a key shows the percentage in
+// place while its own call runs (several at once for premium: each button
+// follows its own download). The returned function puts the label back.
+const inlineProgress = new Map(); // key -> Set<button>
+function trackProgress(btn, key) {
+  const label = btn.textContent;
+  let set = inlineProgress.get(key);
+  if (!set) inlineProgress.set(key, (set = new Set()));
+  set.add(btn);
+  return () => {
+    set.delete(btn);
+    if (!set.size && inlineProgress.get(key) === set) inlineProgress.delete(key);
+    btn.textContent = label;
+  };
+}
+function inlineProgressUpdate(p) {
+  if (!p.key) return;
+  const text = p.total
+    ? `⭳ ${Math.min(100, Math.round((p.received / p.total) * 100))}%`
+    : `⭳ ${(p.received / 1048576).toFixed(1)} MB`;
+  for (const [key, set] of inlineProgress) {
+    if (p.key === key || p.key.startsWith(`${key}:`)) for (const b of set) b.textContent = text;
+  }
+}
+function progressKeyFor(mod) {
+  const o = mod && mod.origin;
+  if (!o) return `mod:${mod && mod.id}`;
+  return o.type === 'github' ? `github:${o.repo}` : `nexus:${o.modId}`;
+}
+
 // Wraps calls that can hit the SHA-256 ownership check (disable/uninstall).
 // A changed-outside-the-manager file stops the operation; the user decides.
 async function verifiedCall(fn, args, actionLabel) {
@@ -184,9 +216,10 @@ function buildUpdateButton(mod) {
     : `⬆ ${mod.updateInfo.latest} on Nexus`;
   el.title = mod.updateInfo.auto
     ? `Update from ${mod.updateInfo.current} to ${mod.updateInfo.latest}`
-    : `v${mod.updateInfo.latest} is out (you have ${mod.updateInfo.current}). Opens the Files page — press "Mod Manager Download" and it updates in place.`;
+    : `v${mod.updateInfo.latest} is out (you have ${mod.updateInfo.current}). Opens the update's download page in the Nexus panel — the download starts there (free accounts) and it updates in place.`;
   el.addEventListener('click', async () => {
     el.disabled = true;
+    const untrack = trackProgress(el, progressKeyFor(mod));
     try {
       const res = await call('updateMod', mod.id);
       if (!res) return;
@@ -195,11 +228,10 @@ function buildUpdateButton(mod) {
         render();
         toast(`“${mod.name}” updated to ${mod.updateInfo.latest}.`);
       } else if (res.opened === 'embed') {
-        openNexusDownload(mod.name, res.url);
-      } else if (res.opened === 'website') {
-        toast('Files page opened — press “Mod Manager Download” and the update installs in place.', 'info', 9000);
+        openEmbedAnswer(res, mod.name);
       }
     } finally {
+      untrack();
       el.disabled = false;
       $('#progress-toast').classList.add('hidden');
     }
@@ -1334,6 +1366,7 @@ function renderSettings() {
     || (state.sevenZipBundled ? 'Bundled with Mod Command X (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
   $('#chk-close-on-launch').checked = !!state.settings.closeOnLaunch;
   $('#chk-reduced-motion').checked = !!state.settings.reducedMotion;
+  $('#chk-autoclick-nexus').checked = state.settings.autoClickNexus !== false;
   // Game update freeze
   const uf = state.updateFreeze || {};
   const chk = $('#chk-update-freeze');
@@ -1512,7 +1545,8 @@ async function openUe4ssVersionsModal() {
     else {
       act.addEventListener('click', async () => {
         act.disabled = true;
-        try { await onClick(); } finally { act.disabled = false; $('#progress-toast').classList.add('hidden'); }
+        const untrack = trackProgress(act, 'ue4ss'); // every download here is the runtime
+        try { await onClick(); } finally { untrack(); act.disabled = false; $('#progress-toast').classList.add('hidden'); }
       });
     }
     r.append(info, act);
@@ -1560,15 +1594,15 @@ async function openUe4ssVersionsModal() {
     else if (cur && cur.source === 'nexus') badges.push(`installed: older v${cur.version || '?'} — newer available`);
     row(`${nx.name} v${nx.version || '?'}${badges.length ? ` — ${badges.join(' · ')}` : ''}`,
       `${nx.modName || 'Nexus mod 9'} · ${(nx.size / 1048576).toFixed(1)} MB · ${nx.publishedAt ? new Date(nx.publishedAt).toLocaleDateString() : ''} · ${tested}${nx.fileDescription ? ` · ${nx.fileDescription}` : ''}`,
-      data.isPremium ? (isCur ? '⭳ Reinstall' : '⭳ Install') : (data.signedIn ? 'Files page ↗' : 'Add API key to install ↗'),
+      data.signedIn ? (isCur ? '⭳ Reinstall' : '⭳ Install') : 'Add API key to install ↗',
       async () => {
-        if (!data.isPremium) { $('#ue4ss-versions-modal').classList.add('hidden'); openNexusDownload('UE4SS for Star Wars Zero Company', data.nexusUrl); return; }
+        // No API key: nothing can be installed from Nexus yet — show the page.
+        if (!data.signedIn) { $('#ue4ss-versions-modal').classList.add('hidden'); openNexusDownload('UE4SS for Star Wars Zero Company', data.nexusUrl, { view: true }); return; }
         const res = await call('installUe4ss', { nexusFileId: nx.fileId });
         if (!res) return;
         if (res.opened === 'embed') {
           $('#ue4ss-versions-modal').classList.add('hidden');
-          openNexusDownload(res.name, res.url);
-          if (res.hint) toast(res.hint, 'info', 9000);
+          openEmbedAnswer(res, 'UE4SS for Star Wars Zero Company');
           return;
         }
         state = res.state;
@@ -1638,8 +1672,7 @@ async function runUe4ssInstall(arg) {
     if (!res) return null;
   }
   if (res.opened === 'embed') {
-    openNexusDownload(res.name, res.url);
-    if (res.hint) toast(res.hint, 'info', 9000);
+    openEmbedAnswer(res, 'UE4SS for Star Wars Zero Company');
     return null;
   }
   state = res.state;
@@ -1651,6 +1684,7 @@ window.runUe4ssInstall = runUe4ssInstall; // reachable for verification harness
 $('#btn-install-ue4ss').addEventListener('click', async () => {
   const btn = $('#btn-install-ue4ss');
   btn.disabled = true;
+  const untrack = trackProgress(btn, 'ue4ss');
   try {
     // Nothing installed → the default (Nexus package). An existing install
     // stays on its own source for Update/Reinstall.
@@ -1661,6 +1695,7 @@ $('#btn-install-ue4ss').addEventListener('click', async () => {
     if (!res) return;
     toast(`UE4SS installed (${res.version})${res.source === 'github' ? ' — stock upstream build, not game-specific' : ''}. Lua/DLL mods are now supported.`);
   } finally {
+    untrack();
     btn.disabled = false;
     $('#progress-toast').classList.add('hidden');
   }
@@ -1733,6 +1768,7 @@ async function offerZcsdkRuntime(needing) {
 }
 $('#chk-close-on-launch').addEventListener('change', (e) => saveSetting({ closeOnLaunch: e.target.checked }));
 $('#chk-reduced-motion').addEventListener('change', (e) => saveSetting({ reducedMotion: e.target.checked }));
+$('#chk-autoclick-nexus').addEventListener('change', (e) => saveSetting({ autoClickNexus: e.target.checked }));
 
 async function saveSetting(patch) {
   const data = await call('saveSettings', patch);
@@ -1999,12 +2035,13 @@ function buildBrowseCard(m) {
     installBtn.title = `Update “${updateEntry.name}” to ${updateEntry.updateInfo.latest}`;
     installBtn.addEventListener('click', async () => {
       installBtn.disabled = true;
+      const untrack = trackProgress(installBtn, `nexus:${m.modId}`);
       try {
         const res = await call('updateMod', updateEntry.id);
         if (res && res.updated) { state = res.state; render(); toast(`“${updateEntry.name}” updated.`); }
-        else if (res && res.opened === 'embed') openNexusDownload(updateEntry.name, res.url);
-        else if (res && res.opened === 'website') toast('Files page opened — press “Mod Manager Download” and the update installs in place.', 'info', 8000);
+        else if (res && res.opened === 'embed') openEmbedAnswer(res, updateEntry.name);
       } finally {
+        untrack();
         installBtn.disabled = false;
         $('#progress-toast').classList.add('hidden');
       }
@@ -2032,16 +2069,15 @@ function buildBrowseCard(m) {
   installBtn.textContent = '⭳ Install';
   installBtn.title = browse.isPremium
     ? 'Download and install directly'
-    : 'Opens the mod’s Files tab — click “Mod Manager Download” there and it installs here automatically';
+    : 'Opens the main file’s download page in the Nexus panel — the download starts there (free accounts) and installs here automatically';
   installBtn.addEventListener('click', async () => {
     installBtn.disabled = true;
+    const untrack = trackProgress(installBtn, `nexus:${m.modId}`);
     try {
       const res = await call('installRemote', m.modId, m.name);
       if (!res) return;
       if (res.opened === 'embed') {
-        openNexusDownload(m.name, res.url);
-      } else if (res.opened === 'website') {
-        toast(`Files page opened for “${m.name}” — press “Mod Manager Download” and it will install here automatically.`, 'info', 9000);
+        openEmbedAnswer(res, m.name);
       } else if (res.pendingFomod) {
         state = res.state;
         render();
@@ -2054,6 +2090,7 @@ function buildBrowseCard(m) {
           : `Installed “${m.name}” from the holonet.`);
       }
     } finally {
+      untrack();
       installBtn.disabled = false;
     }
   });
@@ -2084,7 +2121,7 @@ async function openNexusVersionsModal(m) {
   $('#nexus-versions-sub').textContent = `“${m.name}” — every file its Nexus page offers, newest first. ` +
     (data.isPremium
       ? 'Installing a different version replaces the installed one (the old version goes to the vault).'
-      : 'Free accounts: the site must start the download — open the files page, and the “Mod Manager Download” button of the file you pick installs exactly that version here.');
+      : 'Free accounts: the download starts on Nexus — the version you pick opens at its own download page in the Nexus panel and installs here. A different version replaces the installed one (the old one goes to the vault).');
   const list = $('#nexus-versions-list');
   list.innerHTML = '';
   if (!data.files.length) {
@@ -2108,38 +2145,36 @@ async function openNexusVersionsModal(m) {
     info.append(name, meta);
     const act = document.createElement('button');
     act.className = 'btn tiny primary';
-    if (data.isPremium) {
-      act.textContent = '⭳ Install this version';
-      act.addEventListener('click', async () => {
-        act.disabled = true;
-        try {
-          const res = await call('nexusInstallFile', m.modId, f.fileId, m.name);
-          if (!res) return;
-          if (res.opened === 'embed') {
-            $('#nexus-versions-modal').classList.add('hidden');
-            openNexusDownload(m.name, res.url);
-          } else if (res.installed) {
-            state = res.state;
-            render();
-            $('#nexus-versions-modal').classList.add('hidden');
-            toast(res.switched
-              ? `“${m.name}” switched to ${f.version ? 'v' + f.version : f.name} — the previous version is in the vault.`
-              : `Installed “${m.name}” (${f.version ? 'v' + f.version : f.name}).`);
-          } else if (res.pendingFomod) {
-            state = res.state;
-            render();
-            $('#nexus-versions-modal').classList.add('hidden');
-          }
-        } finally {
-          act.disabled = false;
-          $('#progress-toast').classList.add('hidden');
+    // Premium downloads it here; a free account gets that version's own
+    // download page in the Nexus panel (the same one-click as every button).
+    act.textContent = '⭳ Install this version';
+    act.addEventListener('click', async () => {
+      act.disabled = true;
+      const untrack = trackProgress(act, `nexus:${m.modId}`);
+      try {
+        const res = await call('nexusInstallFile', m.modId, f.fileId, m.name);
+        if (!res) return;
+        if (res.opened === 'embed') {
+          $('#nexus-versions-modal').classList.add('hidden');
+          openEmbedAnswer(res, m.name);
+        } else if (res.installed) {
+          state = res.state;
+          render();
+          $('#nexus-versions-modal').classList.add('hidden');
+          toast(res.switched
+            ? `“${m.name}” switched to ${f.version ? 'v' + f.version : f.name} — the previous version is in the vault.`
+            : `Installed “${m.name}” (${f.version ? 'v' + f.version : f.name}).`);
+        } else if (res.pendingFomod) {
+          state = res.state;
+          render();
+          $('#nexus-versions-modal').classList.add('hidden');
         }
-      });
-    } else {
-      act.textContent = 'Files page ↗';
-      act.className = 'btn tiny';
-      act.addEventListener('click', () => call('openExternal', `${m.url}?tab=files`));
-    }
+      } finally {
+        untrack();
+        act.disabled = false;
+        $('#progress-toast').classList.add('hidden');
+      }
+    });
     row.append(info, act);
     list.appendChild(row);
   }
@@ -2255,7 +2290,7 @@ async function renderNexusOptionalSection(mod) {
     `Each installs under “${mod.name}” with its own on/off switch, and is removed if you uninstall the mod. ` +
     (data.isPremium
       ? 'Installing one downloads it straight away.'
-      : 'Free accounts: the site must start the download — open the files page and press the “Mod Manager Download” button of the file you want; it installs here as an optional file.');
+      : 'Free accounts: the download starts on Nexus — the file you pick opens at its own download page in the Nexus panel and installs here as an optional file.');
   list.innerHTML = '';
   if (!data.files.length) {
     const empty = document.createElement('div');
@@ -2295,12 +2330,13 @@ async function renderNexusOptionalSection(mod) {
     acts.className = 'optional-acts';
     const install = async (btn, reinstall) => {
       btn.disabled = true;
+      const untrack = trackProgress(btn, `nexus:${modId}:${f.fileId}`);
       try {
         const res = await call('nexusInstallOptional', modId, f.fileId, parentId);
         if (!res) return;
         if (res.opened === 'embed') {
           $('#optional-files-modal').classList.add('hidden');
-          openNexusDownload(res.name || mod.name, res.url);
+          openEmbedAnswer(res, mod.name);
           return;
         }
         if (res.pendingFomod) {
@@ -2321,6 +2357,7 @@ async function renderNexusOptionalSection(mod) {
             : `Optional file “${res.name || f.name}” installed under “${mod.name}”.`);
         }
       } finally {
+        untrack();
         btn.disabled = false;
         $('#progress-toast').classList.add('hidden');
       }
@@ -2333,26 +2370,21 @@ async function renderNexusOptionalSection(mod) {
       done.disabled = true;
       done.title = 'Already installed as an optional file of this mod — switch it off or remove it on the Command Deck.';
       acts.appendChild(done);
-      if (data.isPremium) {
-        const again = document.createElement('button');
-        again.className = 'btn ghost tiny';
-        again.textContent = 'Reinstall';
-        again.title = 'Download this file again and replace the installed copy (the old one goes to the version vault)';
-        again.addEventListener('click', () => install(again, true));
-        acts.appendChild(again);
-      }
-    } else if (data.isPremium) {
+      const again = document.createElement('button');
+      again.className = 'btn ghost tiny';
+      again.textContent = 'Reinstall';
+      again.title = 'Download this file again and replace the installed copy (the old one goes to the version vault)';
+      again.addEventListener('click', () => install(again, true));
+      acts.appendChild(again);
+    } else {
+      // One click for both account types: premium downloads here, a free
+      // account gets this file's own download page in the Nexus panel.
       const act = document.createElement('button');
       act.className = 'btn tiny primary';
       act.textContent = '⭳ Install';
-      act.title = `Install “${f.name}” as an optional file of “${mod.name}”`;
-      act.addEventListener('click', () => install(act, false));
-      acts.appendChild(act);
-    } else {
-      const act = document.createElement('button');
-      act.className = 'btn tiny';
-      act.textContent = 'Files page ↗';
-      act.title = 'Opens the mod’s Files tab — press “Mod Manager Download” on this file and it installs here as an optional file';
+      act.title = data.isPremium
+        ? `Install “${f.name}” as an optional file of “${mod.name}”`
+        : `Opens “${f.name}”'s download page in the Nexus panel — the download starts there and it installs as an optional file of “${mod.name}”`;
       act.addEventListener('click', () => install(act, false));
       acts.appendChild(act);
     }
@@ -2552,10 +2584,12 @@ function buildForgeCard(m) {
     installBtn.title = `Update “${forgeUpdate.name}” to ${forgeUpdate.updateInfo.latest}`;
     installBtn.addEventListener('click', async () => {
       installBtn.disabled = true;
+      const untrack = trackProgress(installBtn, `github:${m.fullName}`);
       try {
         const res = await call('updateMod', forgeUpdate.id);
         if (res && res.updated) { state = res.state; render(); toast(`“${forgeUpdate.name}” updated.`); }
       } finally {
+        untrack();
         installBtn.disabled = false;
         $('#progress-toast').classList.add('hidden');
       }
@@ -2568,6 +2602,7 @@ function buildForgeCard(m) {
     installBtn.textContent = '⭳ Install';
     installBtn.addEventListener('click', async () => {
       installBtn.disabled = true;
+      const untrack = trackProgress(installBtn, `github:${m.fullName}`);
       try {
         const res = await call('installGithub', m.fullName);
         if (!res || res.cancelled) return;
@@ -2583,6 +2618,7 @@ function buildForgeCard(m) {
             : `Installed “${m.name}” from GitHub.`);
         }
       } finally {
+        untrack();
         installBtn.disabled = false;
         $('#progress-toast').classList.add('hidden');
       }
@@ -2864,13 +2900,26 @@ $$('[data-close-modal]').forEach((b) =>
   b.addEventListener('click', () => $(`#${b.dataset.closeModal}`).classList.add('hidden')));
 
 // ------------------------------------------------------------ Nexus download panel (embedded)
-// The free-account path: browse the mod's real Files page inside an isolated
-// <webview>; the "Mod Manager Download" nxm:// link is caught in the main
-// process and installed (main.js). Faithful render — the page is shown untouched.
-// This panel surfaces download progress from the same events the install
-// pipeline already emits, and closes itself once the mod is installed.
-const nexusDl = { open: false, sawProgress: false, done: false, target: '' };
+// The free-account path: the real Nexus page inside an isolated <webview>,
+// opened at the EXACT file's download page (main.js embedDownload). The
+// "Slow download" → nxm:// handoff is caught in the main process and installed
+// (main.js). Faithful render — the page is shown untouched, ads included.
+// With Settings → "Auto-click Nexus download for free accounts" on, the
+// auto-click (src/nexus-autoclick.js — every selector lives there) presses the
+// site's buttons once the site enables them, and the status strip says what it
+// is doing. The panel surfaces download progress from the same events the
+// install pipeline already emits, and closes itself once the file is installed.
+//
+// One panel at a time: a second free-account download pressed while one is
+// open waits in nexusDl.queue and opens when the current one closes.
+const nexusDl = { open: false, sawProgress: false, done: false, target: '', viewOnly: false, auto: null, queue: [] };
 const NEXUS_LOGIN_URL = 'https://users.nexusmods.com/auth/sign_in';
+const NEXUS_AUTO_TICK_MS = 600;
+// A page that reloads itself after every press would otherwise be pressed on
+// every load; two loads with a press and no file is where the user takes over.
+const NEXUS_AUTO_MAX_CLICK_LOADS = 2;
+let nexusAutoTimer = null;
+let nexusAutoBusy = false;
 
 function setNexusPill(text, kind) {
   const status = $('#nexus-dl-status');
@@ -2879,43 +2928,160 @@ function setNexusPill(text, kind) {
   status.className = 'nexus-dl-pill' + (kind ? ' ' + kind : '');
 }
 
+function setNexusStrip(text, kind) {
+  const strip = $('#nexus-dl-auto');
+  if (!strip) return;
+  strip.classList.toggle('hidden', !text);
+  strip.textContent = text || '';
+  strip.className = 'nexus-dl-auto' + (kind ? ' ' + kind : '') + (text ? '' : ' hidden');
+}
+
+function nexusAutoEnabled() {
+  return !(state && state.settings && state.settings.autoClickNexus === false);
+}
+
+function renderNexusQueue() {
+  const chip = $('#nexus-dl-queue');
+  if (!chip) return;
+  const n = nexusDl.queue.length;
+  chip.classList.toggle('hidden', !n);
+  chip.textContent = `${n} queued ✕`;
+  chip.title = n ? `Waiting: ${nexusDl.queue.map((q) => q.name).join(', ')} — click to cancel them` : '';
+}
+
 // opts.view: just SHOW a mod page for the user to check (e.g. verifying a link
 // candidate) — same isolated in-app panel, but labelled as a page view rather
-// than a pending download.
+// than a pending download. opts.auto = { modId, fileId }: this is a one-click
+// download of exactly that file (the url is its download page).
 function openNexusDownload(name, url, opts = {}) {
   const modal = $('#nexus-dl-modal');
   const view = $('#nexus-dl-view');
   if (!modal || !view) return;
+  // Busy with another download: queue this one instead of replacing it.
+  if (!opts.view && nexusDl.open && !nexusDl.viewOnly && !nexusDl.done) {
+    if (nexusDl.target === url || nexusDl.queue.some((q) => q.url === url)) {
+      toast(`“${name}” is already in the Nexus panel.`, 'info', 5000);
+      return;
+    }
+    nexusDl.queue.push({ name, url, opts });
+    renderNexusQueue();
+    toast(`“${name}” is queued — it opens in the Nexus panel when the current download finishes.`, 'info', 6000);
+    return;
+  }
   nexusDl.open = true; nexusDl.sawProgress = false; nexusDl.done = false; nexusDl.target = url;
   nexusDl.viewOnly = !!opts.view;
+  nexusDl.auto = !opts.view && opts.auto
+    ? { modId: opts.auto.modId, fileId: opts.auto.fileId, url, on: nexusAutoEnabled(),
+      clickLoads: 0, docClicked: false, sawLogin: false, phase: null }
+    : null;
   const title = $('#nexus-dl-title');
   if (title) title.textContent = opts.view ? 'NEXUS PAGE' : 'NEXUS DOWNLOAD';
   $('#nexus-dl-sub').textContent = name || 'Nexus Mods';
   setNexusPill(opts.view ? 'Viewing — close to return' : 'Loading…', opts.view ? '' : 'busy');
+  setNexusStrip(nexusDl.auto
+    ? (nexusDl.auto.on
+      ? 'Mod Command X is starting the download for you…'
+      : 'Click “Slow download” on the page — the file installs here automatically.')
+    : '');
   $('#nexus-dl-progress').classList.add('hidden');
   $('#nexus-dl-progress-bar').style.width = '0%';
+  renderNexusQueue();
   view.src = url;
   modal.classList.remove('hidden');
+  if (nexusDl.auto && nexusDl.auto.on) {
+    if (!nexusAutoTimer) nexusAutoTimer = setInterval(nexusAutoTick, NEXUS_AUTO_TICK_MS);
+  } else if (nexusAutoTimer) {
+    clearInterval(nexusAutoTimer); nexusAutoTimer = null;
+  }
   // Some Nexus ad/tracker subresources retry and can delay did-stop-loading;
   // settle the pill and re-check the account state after a few seconds so the
   // panel never looks stuck on "Loading…".
   setTimeout(() => {
     if (nexusDl.open && !nexusDl.sawProgress && !nexusDl.done) {
       const s = $('#nexus-dl-status');
-      if (s && /Loading/.test(s.textContent)) setNexusPill('Awaiting “Mod Manager Download”', '');
+      if (s && /Loading/.test(s.textContent)) setNexusPill('Awaiting download', '');
       refreshNexusAccount();
     }
   }, 5000);
 }
 window.openNexusDownload = openNexusDownload; // reachable for verification harness
 
+// Open whatever a button's main-process answer asks for: { opened:'embed',
+// url, name, auto } from every free-account install/update path.
+function openEmbedAnswer(res, fallbackName) {
+  openNexusDownload(res.name || fallbackName, res.url, { auto: res.auto || null });
+}
+
 function closeNexusDownload() {
   nexusDl.open = false;
+  nexusDl.auto = null;
+  if (nexusAutoTimer) { clearInterval(nexusAutoTimer); nexusAutoTimer = null; }
   const modal = $('#nexus-dl-modal');
   const view = $('#nexus-dl-view');
   if (modal) modal.classList.add('hidden');
+  setNexusStrip('');
   // Stop background media/network in the guest once the panel is dismissed.
   try { if (view) view.src = 'about:blank'; } catch (_) {}
+  // Next queued download, if any — each one was an explicit click.
+  if (nexusDl.queue.length) {
+    const next = nexusDl.queue.shift();
+    setTimeout(() => openNexusDownload(next.name, next.url, next.opts), 400);
+  }
+  renderNexusQueue();
+}
+
+// One auto-click step: runs only while the panel shows the exact file page
+// this one-click opened (NexusAutoclick.isTargetPage); everything else the
+// user browses to in the panel is left alone.
+async function nexusAutoTick() {
+  const a = nexusDl.auto;
+  if (!nexusDl.open || nexusDl.done || !a || !a.on) return;
+  if (nexusDl.sawProgress) { setNexusStrip('Nexus handed the file over — downloading and installing…', 'good'); return; }
+  if (nexusAutoBusy) return;
+  const view = $('#nexus-dl-view');
+  let url = '';
+  try { url = view.getURL(); } catch (_) { return; }
+  if (!url || url === 'about:blank') return;
+  if (NexusAutoclick.isLoginPage(url)) {
+    a.sawLogin = true;
+    setNexusStrip('Sign in to Nexus Mods here — the download continues by itself once you are back on the file.', 'warn');
+    return;
+  }
+  if (!NexusAutoclick.isTargetPage(url, a.url)) {
+    let sameSite = false;
+    try { sameSite = new URL(url).origin === new URL(a.url).origin; } catch (_) {}
+    if (a.sawLogin && sameSite) {
+      // Signed in and Nexus sent them somewhere else: back to the file.
+      a.sawLogin = false;
+      setNexusStrip('Signed in — back to the file…');
+      try { view.loadURL(a.url); } catch (_) {}
+      return;
+    }
+    setNexusStrip('Auto-click paused — it only runs on the file’s download page. Click “Slow download” there to continue.', 'warn');
+    return;
+  }
+  if (a.clickLoads >= NEXUS_AUTO_MAX_CLICK_LOADS && !a.docClicked) {
+    setNexusStrip('Click “Slow download” to continue — Mod Command X installs the file as soon as Nexus hands it over.', 'warn');
+    return;
+  }
+  nexusAutoBusy = true;
+  let rep = null;
+  try {
+    rep = await view.executeJavaScript(NexusAutoclick.stepCode(a), true);
+  } catch (_) { rep = null; } finally { nexusAutoBusy = false; }
+  if (!rep || nexusDl.auto !== a || nexusDl.sawProgress) return;
+  if (rep.clicked && rep.clicked.length && !a.docClicked) { a.docClicked = true; a.clickLoads += 1; }
+  a.phase = rep.phase;
+  const secs = rep.countdown != null && rep.countdown > 0 ? ` — ${rep.countdown} s` : '';
+  switch (rep.phase) {
+    case 'searching': setNexusStrip('Mod Command X is starting the download for you…'); break;
+    case 'waiting': setNexusStrip(`Waiting for Nexus to enable “Slow download”${secs}…`); break;
+    case 'clicked': setNexusStrip(secs ? `Nexus starts the download${secs}…` : 'Download requested — waiting for Nexus to hand the file over…'); break;
+    case 'login': setNexusStrip('Sign in to Nexus Mods (◈ Sign in, top right) — the download continues by itself afterwards.', 'warn'); break;
+    case 'challenge': setNexusStrip('Nexus is checking this browser — complete the check yourself. Auto-click stays out of it; press “Slow download” afterwards if it does not continue.', 'warn'); break;
+    case 'fallback': setNexusStrip('Click “Slow download” to continue — Mod Command X installs the file as soon as Nexus hands it over.', 'warn'); break;
+    default: break;
+  }
 }
 
 // Progress + completion for the panel, driven by the shared install events.
@@ -2928,6 +3094,7 @@ function nexusDlProgress(pct, received) {
     : `Downloading — ${(received / 1048576).toFixed(1)} MB`;
   $('#nexus-dl-progress-bar').style.width = `${pct ?? 100}%`;
   setNexusPill('Downloading…', 'busy');
+  if (nexusDl.auto) setNexusStrip('Nexus handed the file over — downloading and installing…', 'good');
 }
 function nexusDlMaybeComplete() {
   if (!nexusDl.open || !nexusDl.sawProgress || nexusDl.done) return;
@@ -2935,6 +3102,7 @@ function nexusDlMaybeComplete() {
   $('#nexus-dl-progress-bar').style.width = '100%';
   $('#nexus-dl-progress-label').textContent = 'Installed';
   setNexusPill('Installed ✓', 'done');
+  if (nexusDl.auto) setNexusStrip('Installed ✓', 'good');
   setTimeout(closeNexusDownload, 1600);
 }
 function nexusDlError() {
@@ -2942,6 +3110,7 @@ function nexusDlError() {
   setNexusPill('Download failed — try again', '');
   nexusDl.sawProgress = false;
   $('#nexus-dl-progress').classList.add('hidden');
+  if (nexusDl.auto) setNexusStrip('The download failed — press “Slow download” to try again.', 'warn');
 }
 
 // Best-effort: detect whether the embedded Nexus session is signed in (and the
@@ -2980,8 +3149,8 @@ async function refreshNexusAccount() {
     chip.textContent = '◈ Sign in to Nexus';
     chip.classList.remove('in');
     chip.title = 'Sign in to Nexus Mods so downloads work';
-    if (nexusDl.open && !nexusDl.sawProgress && !nexusDl.done) {
-      setNexusPill('Sign in, then press “Mod Manager Download”', '');
+    if (nexusDl.open && !nexusDl.viewOnly && !nexusDl.sawProgress && !nexusDl.done) {
+      setNexusPill('Sign in to download', '');
     }
   }
 }
@@ -2994,9 +3163,13 @@ async function refreshNexusAccount() {
   });
   view.addEventListener('did-stop-loading', () => {
     if (nexusDl.open && !nexusDl.sawProgress && !nexusDl.done) {
-      setNexusPill('Awaiting “Mod Manager Download”', '');
+      setNexusPill(nexusDl.viewOnly ? 'Viewing — close to return' : 'Awaiting download', '');
     }
     refreshNexusAccount();
+  });
+  // A new document is a new page load for the auto-click's once-per-load rule.
+  view.addEventListener('did-navigate', () => {
+    if (nexusDl.auto) nexusDl.auto.docClicked = false;
   });
   const reload = $('#nexus-dl-reload');
   if (reload) reload.addEventListener('click', () => { try { view.reload(); } catch (_) {} });
@@ -3010,6 +3183,13 @@ async function refreshNexusAccount() {
   if (acct) acct.addEventListener('click', () => {
     if (acct.classList.contains('in')) return;
     try { view.loadURL(NEXUS_LOGIN_URL); } catch (_) { view.src = NEXUS_LOGIN_URL; }
+  });
+  const queue = $('#nexus-dl-queue');
+  if (queue) queue.addEventListener('click', () => {
+    const n = nexusDl.queue.length;
+    nexusDl.queue.length = 0;
+    renderNexusQueue();
+    if (n) toast(`Cancelled ${n} queued Nexus download${n === 1 ? '' : 's'}.`, 'info', 5000);
   });
   // The shared [data-close-modal] handler hides the panel; also blank the guest.
   const closeBtn = document.querySelector('[data-close-modal="nexus-dl-modal"]');
@@ -3958,6 +4138,7 @@ window.zc.onEvent((payload) => {
     if (payload.total && payload.received >= payload.total) {
       setTimeout(() => box.classList.add('hidden'), 1200);
     }
+    inlineProgressUpdate(payload);          // on the button that started it
     nexusDlProgress(pct, payload.received); // mirror into the download panel
   }
 });

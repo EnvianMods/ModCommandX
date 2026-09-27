@@ -45,7 +45,8 @@ package.json (the version Mod SDK manifests are checked against).
   header, and never shown, logged or put in a diagnostics report. X never
   deletes a stored key — only Clear does.
 - Name and premium status come from validate.json; premium still decides
-  direct download vs. the website's "Mod Manager Download".
+  direct download vs. starting it on the website (now one click either way —
+  see below).
 - Adult content still follows your Nexus account: the v2 GraphQL
   `preferences { adult }` query is sent with the API key; with no key, or if
   it cannot be read, adult-rated mods stay hidden.
@@ -54,6 +55,35 @@ package.json (the version Mod SDK manifests are checked against).
   own paks.
 
 ### Also in 1.0.0 — work that followed upstream 1.9.14
+
+**One click to download — premium or free**
+- Every Nexus download button is now one click: Holonet ⭳ Install and
+  ⬆ Update, the Command Deck's ⬆ Update, ⧗ Versions "Install this version",
+  ⊕ Optional files ⭳ Install / Reinstall, and UE4SS (Settings card and ⧗
+  Versions).
+- Premium: downloaded and installed straight away, no dialogs, with the
+  percentage shown on the button you pressed. Several can run at once.
+- Free accounts: Nexus needs those downloads to start on its website, so the
+  click opens the in-app Nexus panel directly on **that file's** download page
+  (no more hunting through the Files tab — and the ⧗ Versions and ⊕ Optional
+  files buttons no longer send you to your browser). Mod Command X then presses
+  **Slow download** for you as soon as Nexus enables it, catches the file Nexus
+  hands over, installs it and closes the panel. A strip at the top of the
+  panel says what it is doing, including Nexus's own countdown.
+- It plays fair: the page stays fully visible, Nexus's wait is never skipped,
+  each button is pressed at most once per page load, and a bot check or
+  CAPTCHA is always left to you. If it finds nothing to press within about 20
+  seconds it asks you to click "Slow download" yourself. Not signed in to
+  Nexus in the panel? Sign in there and the download carries on by itself.
+- Pressed Install on several mods? They queue and open one after another
+  ("N queued ✕" in the panel cancels the rest).
+- Settings → Nexus Mods → **Auto-click Nexus download for free accounts**
+  (on by default). Off, the panel still opens on the exact file and you press
+  the button.
+- GitHub installs keep their confirmation — it is the "GitHub mods aren't
+  moderated, install only from authors you trust" warning.
+- For maintainers: everything that knows the Nexus page (selectors, button
+  texts, countdown and challenge markers) is in `src/nexus-autoclick.js`.
 
 **Install a mod's optional files — and switch them on and off one by one**
 - Most Nexus pages offer more than the main download: alternative textures, a
@@ -64,8 +94,8 @@ package.json (the version Mod SDK manifests are checked against).
   miscellaneous ones — with their size, date and the author's own description,
   and marks anything you already have. Press **⭳ Install** and it is added
   *alongside* the mod, not over it. (No API key? The button asks you to add
-  one first. Free account? It opens the mod's files page in the app, exactly like
-  any other download — press "Mod Manager Download" on the file you want.)
+  one first. Free account? It is the same one click as every other download —
+  see below.)
 - Installed optional files fold away under the mod they belong to: the row shows
   **▸ 2 optional files**, and opening it lists each one indented, with its own
   on/off switch, its own version and its own ✕ to remove just that file.
