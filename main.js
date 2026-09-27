@@ -81,7 +81,7 @@ const report = require('./lib/report');
 // installed. It carries no copy of that UI — see lib/sdk-link.js and
 // docs/SDK_LINK.md.
 const sdkLink = require('./lib/sdk-link');
-const { configureBrowserIdentity, configureNexusSession } = require('./lib/nexus-browser');
+const { configureBrowserIdentity, configureNexusSession, learnClientHints } = require('./lib/nexus-browser');
 // Before 'ready': every renderer, out-of-process iframe and worker (the Nexus
 // panel's Cloudflare Turnstile frame included) presents the plain Chrome user
 // agent, not Electron's — see lib/nexus-browser.js.
@@ -815,6 +815,10 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // The Nexus panel's navigations and worker requests carry the same Sec-CH-UA
+  // client hints Chrome sends (read from this window's own Chromium; see
+  // lib/nexus-browser.js).
+  win.webContents.once('did-finish-load', () => { learnClientHints(win.webContents); });
 
   // The SDK link hosts a WebContentsView inside THIS window, so it can only be
   // configured once the window exists. Linking itself is deferred to the
