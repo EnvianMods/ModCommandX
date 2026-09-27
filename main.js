@@ -412,6 +412,54 @@ const protocolArgs = () => {
   return { exe: process.execPath, args: [app.getAppPath()] };
 };
 
+// ---------------------------------------------------------- free-account one-click
+// A free Nexus account cannot get a download link from the API: the website
+// has to start the download. Every install / update / version / optional-file
+// / UE4SS button therefore answers a free account with the embedded Nexus
+// panel pointed at the EXACT file's download page (nexus.fileDownloadPage),
+// and the renderer's auto-click (src/nexus-autoclick.js) presses "Slow
+// download" once the site enables it. The nxm:// link the site then emits is
+// caught in web-contents-created below and installed by handleNxm.
+//
+// What the click was FOR travels separately: an optional file pressed on a
+// particular mod row must land under that row, and the nxm:// link cannot say
+// so. Entries expire, so a stale one never re-parents a later download.
+const pendingWebDownloads = new Map(); // `${modId}:${fileId}` -> { parentId, at }
+const PENDING_WEB_TTL_MS = 60 * 60 * 1000;
+
+function embedDownload(modId, fileId, name, extra = {}) {
+  if (extra.parentId) pendingWebDownloads.set(`${modId}:${fileId}`, { parentId: extra.parentId, at: Date.now() });
+  return {
+    opened: 'embed',
+    url: nexus.fileDownloadPage(modId, fileId),
+    name,
+    auto: { modId: Number(modId), fileId: Number(fileId) },
+  };
+}
+
+function takePendingWebDownload(modId, fileId) {
+  const key = `${modId}:${fileId}`;
+  const hit = pendingWebDownloads.get(key) || null;
+  pendingWebDownloads.delete(key);
+  return hit && Date.now() - hit.at < PENDING_WEB_TTL_MS ? hit : null;
+}
+
+// The user pressed the button on a specific mod row — that row is the parent,
+// even when another entry of the same Nexus mod is installed too. A child of
+// that row which IS this file (or an older one on its update chain) is
+// replaced rather than joined by a second copy.
+function pinPlanToParent(plan, modId, fileId, updates, parentMod) {
+  if (!parentMod || plan.parentId === parentMod.id) return plan;
+  const child = store.mods.find((m) => m.parentId === parentMod.id
+    && m.origin && m.origin.type === 'nexus' && m.origin.modId === modId
+    && (m.origin.fileId === fileId
+      || (m.origin.fileId != null && nexus.updateChain(updates, m.origin.fileId).includes(fileId)))) || null;
+  return {
+    ...plan, parentId: parentMod.id, mode: child ? 'replace-child' : 'child',
+    childId: child ? child.id : null, childFileId: child ? child.origin.fileId : null,
+  };
+}
+
 async function handleNxm(rawUrl) {
   try {
     const link = nexus.parseNxm(rawUrl);
@@ -431,12 +479,18 @@ async function handleNxm(rawUrl) {
     const fileName = (fileMeta && fileMeta.file_name) || null;
     const uri = await nexus.downloadLink(link, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, fileName, (got, total) => {
-      sendEvent({ type: 'progress', label: info ? info.name : `mod ${link.modId}`, received: got, total });
+      sendEvent({ type: 'progress', key: `nexus:${link.modId}`, label: info ? info.name : `mod ${link.modId}`, received: got, total });
     });
     try {
       // Where does this file belong — is it the mod itself, or an extra that
       // rides alongside the installed main file? (see planNexusInstall)
-      const plan = planNexusInstall(link.modId, link.fileId, filesData, fileMeta);
+      let plan = planNexusInstall(link.modId, link.fileId, filesData, fileMeta);
+      // A free account's one-click from a specific mod row (optional files,
+      // an optional file's update): that row is the parent, exactly as on the
+      // premium path.
+      const pending = takePendingWebDownload(link.modId, link.fileId);
+      const pinnedParent = pending && pending.parentId ? store.getMod(pending.parentId) : null;
+      if (pinnedParent) plan = pinPlanToParent(plan, link.modId, link.fileId, filesData.updates, pinnedParent);
       const version = (fileMeta && fileMeta.version) || (info ? info.version : null);
       const origin = { type: 'nexus', modId: link.modId, fileId: link.fileId, version, category: plan.category, fileName };
       // The UE4SS compatibility page: keep the current runtime first, and
@@ -1606,23 +1660,16 @@ const handlers = {
     if (!nexusUser) {
       try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); }
     }
-    if (!nexusUser.isPremium) {
-      // Nexus policy: non-premium downloads must start on the website. Rather
-      // than leaving the app, we hand the mod's Files URL back to the renderer,
-      // which opens it in the embedded Nexus panel; the "Mod Manager Download"
-      // button there emits an nxm:// link we catch (see web-contents-created).
-      return {
-        opened: 'embed',
-        url: `https://www.nexusmods.com/${nexus.GAME_DOMAIN}/mods/${modId}?tab=files`,
-        name,
-      };
-    }
+    // Both account types pick the file the same way: the newest MAIN file.
     const files = await nexus.filesList(modId, token);
     const file = nexus.pickPrimaryFile(files);
     if (!file) throw new Error('That mod has no downloadable main file.');
+    // Nexus policy: non-premium downloads must start on the website — the
+    // embedded panel opens at exactly this file (see embedDownload).
+    if (!nexusUser.isPremium) return embedDownload(modId, file.file_id, name);
     const uri = await nexus.downloadLink({ modId, fileId: file.file_id }, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', label: name || `mod ${modId}`, received: got, total });
+      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: name || `mod ${modId}`, received: got, total });
     });
     try {
       const origin = {
@@ -1793,23 +1840,17 @@ const handlers = {
   'nexus-install-file': async (_e, { modId, fileId, name }) => {
     const token = await nexusAccessToken();
     if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
-    if (!nexusUser.isPremium) {
-      // Free accounts: the website mints the link. Open the mod's Files page in
-      // the embedded Nexus panel; the nxm handoff installs the file the user
-      // clicks there — no leaving the app.
-      return {
-        opened: 'embed',
-        url: `https://www.nexusmods.com/${nexus.GAME_DOMAIN}/mods/${modId}?tab=files`,
-        name,
-      };
-    }
+    // Free accounts: the website mints the link — the embedded panel opens at
+    // exactly this version's download page and the nxm handoff installs it
+    // (handleNxm applies the same planNexusInstall rules as below).
+    if (!nexusUser.isPremium) return embedDownload(modId, fileId, name);
     const data = await nexus.filesData(modId, token);
     const file = data.files.find((f) => f.file_id === fileId);
     if (!file) throw new Error('That file is no longer listed on the mod page.');
     const plan = planNexusInstall(modId, fileId, data, file);
     const uri = await nexus.downloadLink({ modId, fileId }, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', label: `${name || `mod ${modId}`} ${file.version || ''}`, received: got, total });
+      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: `${name || `mod ${modId}`} ${file.version || ''}`, received: got, total });
     });
     try {
       const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
@@ -1886,31 +1927,16 @@ const handlers = {
     if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
     const parentMod = parentId ? store.getMod(parentId) : null;
     if (!nexusUser.isPremium) {
-      return {
-        opened: 'embed',
-        url: `https://www.nexusmods.com/${nexus.GAME_DOMAIN}/mods/${modId}?tab=files`,
-        name: parentMod ? parentMod.name : `mod ${modId}`,
-      };
+      return embedDownload(modId, fileId, parentMod ? parentMod.name : `mod ${modId}`,
+        { parentId: parentMod ? parentMod.id : null });
     }
     const data = await nexus.filesData(modId, token);
     const file = data.files.find((f) => f.file_id === fileId);
     if (!file) throw new Error('That file is no longer listed on the mod page.');
-    let plan = planNexusInstall(modId, fileId, data, file);
-    // The user pressed the button on a specific mod row — that row is the
-    // parent, even when another entry of the same Nexus mod is installed too.
-    if (parentMod && plan.parentId !== parentMod.id) {
-      const child = store.mods.find((m) => m.parentId === parentMod.id
-        && m.origin && m.origin.type === 'nexus' && m.origin.modId === modId
-        && (m.origin.fileId === fileId
-          || (m.origin.fileId != null && nexus.updateChain(data.updates, m.origin.fileId).includes(fileId)))) || null;
-      plan = {
-        ...plan, parentId: parentMod.id, mode: child ? 'replace-child' : 'child',
-        childId: child ? child.id : null, childFileId: child ? child.origin.fileId : null,
-      };
-    }
+    const plan = pinPlanToParent(planNexusInstall(modId, fileId, data, file), modId, fileId, data.updates, parentMod);
     const uri = await nexus.downloadLink({ modId, fileId }, token);
     const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', label: `${file.name || file.file_name}${file.version ? ` v${file.version}` : ''}`, received: got, total });
+      sendEvent({ type: 'progress', key: `nexus:${modId}:${fileId}`, label: `${file.name || file.file_name}${file.version ? ` v${file.version}` : ''}`, received: got, total });
     });
     try {
       const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
@@ -2117,7 +2143,7 @@ const handlers = {
     });
     if (choice.response !== 0) return { cancelled: true };
     const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total) => {
-      sendEvent({ type: 'progress', label: fullName, received: got, total });
+      sendEvent({ type: 'progress', key: `github:${fullName}`, label: fullName, received: got, total });
     });
     try {
       const res = await engine.install(dest, {
@@ -2147,7 +2173,7 @@ const handlers = {
       const release = await github.latestReleaseFor(origin.repo);
       if (!release) throw new Error('The new release has no installable archive.');
       const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total) => {
-        sendEvent({ type: 'progress', label: mod.name, received: got, total });
+        sendEvent({ type: 'progress', key: `github:${origin.repo}`, label: mod.name, received: got, total });
       });
       try {
         const res = await engine.replaceOrigin(
@@ -2170,7 +2196,7 @@ const handlers = {
         if (!file) throw new Error('The updated mod has no downloadable main file.');
         const uri = await nexus.downloadLink({ modId: origin.modId, fileId: file.file_id }, token);
         const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-          sendEvent({ type: 'progress', label: mod.name, received: got, total });
+          sendEvent({ type: 'progress', key: `nexus:${origin.modId}`, label: mod.name, received: got, total });
         });
         try {
           const newVersion = file.version || mod.updateInfo.latest;
@@ -2194,9 +2220,18 @@ const handlers = {
         }
         return { updated: true, state: fullState() };
       }
-      // Free account: open the mod page in the embedded Nexus panel; the nxm
-      // link from "Mod Manager Download" replaces the mod in place.
-      return { opened: 'embed', url: mod.updateInfo.url, name: mod.name };
+      // Free account: the embedded panel opens at the update's own download
+      // page (the file the update chain points at); the nxm:// it hands back
+      // replaces the mod in place through handleNxm. An optional-file row
+      // keeps its parent.
+      let fileId = mod.updateInfo.fileId || null;
+      if (!fileId) {
+        const data = await withNexusToken((t) => nexus.filesData(origin.modId, t));
+        const primary = nexus.pickPrimaryFile(data.files);
+        if (!primary) throw new Error('The updated mod has no downloadable main file.');
+        fileId = primary.file_id;
+      }
+      return embedDownload(origin.modId, fileId, mod.name, { parentId: mod.parentId || null });
     }
     throw new Error('That mod has no update source.');
   },
@@ -2250,7 +2285,7 @@ const handlers = {
     if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
     sendEvent({ type: 'toast', message: `Downloading ${asset.name} (${(asset.size / 1048576).toFixed(1)} MB) from GitHub…` });
     const dest = await nexus.downloadToFile(asset.url, store.stagingDir, asset.name, (got, total) => {
-      sendEvent({ type: 'progress', label: `UE4SS ${asset.releaseName}`, received: got, total });
+      sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS ${asset.releaseName}`, received: got, total });
     });
     try {
       const result = await engine.install(dest);
@@ -2396,12 +2431,7 @@ async function installUe4ssFromNexus(fileId) {
   if (!nexusSignedIn()) throw new Error('Add your Nexus Mods API key in Settings first, or install the GitHub build.');
   const token = await nexusAccessToken();
   if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
-  if (!nexusUser.isPremium) {
-    return {
-      opened: 'embed', url: ue4ssDl.NEXUS_URL, name: 'UE4SS for Star Wars Zero Company',
-      hint: 'Press Mod Manager Download on the file list and Mod Command X installs it.',
-    };
-  }
+  if (!nexusUser.isPremium) return embedDownload(ue4ssDl.NEXUS_MOD_ID, fileId, 'UE4SS for Star Wars Zero Company');
   const files = await nexus.filesList(ue4ssDl.NEXUS_MOD_ID, token);
   const file = files.find((f) => f.file_id === fileId);
   if (!file) throw new Error('That file is no longer listed on the Nexus page.');
@@ -2410,7 +2440,7 @@ async function installUe4ssFromNexus(fileId) {
   if (kept) log('info', `UE4SS runtime kept before update: ${kept}`);
   const uri = await nexus.downloadLink({ modId: ue4ssDl.NEXUS_MOD_ID, fileId }, token);
   const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-    sendEvent({ type: 'progress', label: `UE4SS (Nexus) ${file.version || ''}`, received: got, total });
+    sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS (Nexus) ${file.version || ''}`, received: got, total });
   });
   try {
     const result = await engine.install(dest);
