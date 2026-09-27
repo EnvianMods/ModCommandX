@@ -590,6 +590,9 @@ function pinPlanToParent(plan, modId, fileId, updates, parentMod) {
 async function handleNxm(rawUrl) {
   try {
     const link = nexus.parseNxm(rawUrl);
+    // Resolves the renderer's "Waiting for Nexus download…" chip for this file
+    // (free downloads finished in the user's own web browser).
+    sendEvent({ type: 'nxm-received', modId: link.modId, fileId: link.fileId });
     const token = await nexusAccessToken();
     sendEvent({ type: 'toast', message: `Nexus download requested (mod ${link.modId})…` });
     let info = null;
@@ -1536,6 +1539,7 @@ const handlers = {
     delete patch.nexusApiKeyEncrypted;
     delete patch.hasNexusKey;
     if ('theme' in patch && !Object.prototype.hasOwnProperty.call(THEMES, patch.theme)) delete patch.theme;
+    if ('nexusDownloadVia' in patch && !['panel', 'browser'].includes(patch.nexusDownloadVia)) delete patch.nexusDownloadVia;
     Object.assign(store.settings, patch);
     store.save();
     if (patch.theme && win && !win.isDestroyed()) win.setBackgroundColor(THEMES[patch.theme]);
@@ -1653,6 +1657,15 @@ const handlers = {
     const p = map[kind];
     if (!p || !fs.existsSync(p)) throw new Error('That folder does not exist yet.');
     await shell.openPath(p);
+    return true;
+  },
+
+  // Settings -> "Where to finish free downloads" = My web browser: the exact
+  // file's download page in the system browser (where the user is normally
+  // signed in already); its Slow download comes back through nxm://.
+  'open-nexus-file-page': async (_e, { modId, fileId }) => {
+    if (!(Number(modId) > 0) || !(Number(fileId) > 0)) throw new Error('Unknown Nexus file.');
+    await shell.openExternal(nexus.fileDownloadPage(modId, fileId));
     return true;
   },
 

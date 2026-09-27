@@ -1398,6 +1398,7 @@ function renderSettings() {
   $('#chk-reduced-motion').checked = !!state.settings.reducedMotion;
   $('#set-theme').value = currentTheme();
   $('#chk-autoclick-nexus').checked = state.settings.autoClickNexus !== false;
+  $('#set-nexus-via').value = state.settings.nexusDownloadVia === 'browser' ? 'browser' : 'panel';
   // Game update freeze
   const uf = state.updateFreeze || {};
   const chk = $('#chk-update-freeze');
@@ -1809,6 +1810,7 @@ $('#chk-reduced-motion').addEventListener('change', (e) => saveSetting({ reduced
 // Applied at once, then saved (the save's render() finds it already applied).
 $('#set-theme').addEventListener('change', (e) => { applyTheme(e.target.value); saveSetting({ theme: e.target.value }); });
 $('#chk-autoclick-nexus').addEventListener('change', (e) => saveSetting({ autoClickNexus: e.target.checked }));
+$('#set-nexus-via').addEventListener('change', (e) => saveSetting({ nexusDownloadVia: e.target.value }));
 
 async function saveSetting(patch) {
   const data = await call('saveSettings', patch);
@@ -3050,7 +3052,93 @@ window.openNexusDownload = openNexusDownload; // reachable for verification harn
 // Open whatever a button's main-process answer asks for: { opened:'embed',
 // url, name, auto } from every free-account install/update path.
 function openEmbedAnswer(res, fallbackName) {
+  if (res.auto && nexusViaBrowser()) { openBrowserDownload(res, res.name || fallbackName); return; }
   openNexusDownload(res.name || fallbackName, res.url, { auto: res.auto || null });
+}
+
+// ------------------------------------------ free downloads in the web browser
+// Settings -> Nexus Mods -> "Where to finish free downloads" = My web browser:
+// the exact file's download page opens in the system browser (the user is
+// normally signed in there already, and it is their own real browser for the
+// Cloudflare check). Its Slow download emits nxm://, which reaches this app
+// only when Mod Command X is the nxm:// handler (second-instance -> handleNxm).
+// Each file waits as a chip until main reports its nxm:// ('nxm-received').
+const NEXUS_BROWSER_WAIT_MS = 15 * 60 * 1000;
+const nexusPending = new Map(); // `${modId}:${fileId}` -> { name, timer }
+
+function nexusViaBrowser() {
+  return !!(state && state.settings && state.settings.nexusDownloadVia === 'browser');
+}
+
+function renderNexusPending() {
+  const box = $('#nexus-pending');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const [key, p] of nexusPending) {
+    const chip = document.createElement('div');
+    chip.className = 'nexus-pending-chip';
+    chip.title = 'Press “Slow download” on the Nexus page in your browser — the file installs here when Nexus hands it over.';
+    const label = document.createElement('span');
+    label.textContent = `Waiting for Nexus download… ${p.name}`;
+    const x = document.createElement('button');
+    x.className = 'nexus-pending-x';
+    x.textContent = '✕';
+    x.title = 'Stop waiting for this download';
+    x.addEventListener('click', () => clearNexusPending(key));
+    chip.append(label, x);
+    box.appendChild(chip);
+  }
+}
+
+function clearNexusPending(key) {
+  const p = nexusPending.get(key);
+  if (!p) return false;
+  clearTimeout(p.timer);
+  nexusPending.delete(key);
+  renderNexusPending();
+  return true;
+}
+
+// One-time: nxm:// is not registered to this app, so explain what registering
+// takes over and offer it. Resolves once the user has chosen.
+function askNxmRegistration() {
+  return new Promise((resolve) => {
+    const modal = $('#nxm-browser-modal');
+    const done = async (register) => {
+      modal.classList.add('hidden');
+      reg.onclick = null; skip.onclick = null;
+      if (register) {
+        const data = await call('registerNxm');
+        if (data) { state = data; render(); toast('nxm:// links now open in Mod Command X.'); }
+      }
+      await saveSetting({ nxmBrowserPrompted: true });
+      resolve();
+    };
+    const reg = $('#btn-nxm-browser-register');
+    const skip = $('#btn-nxm-browser-skip');
+    reg.onclick = () => done(true);
+    skip.onclick = () => done(false);
+    modal.classList.remove('hidden');
+  });
+}
+
+async function openBrowserDownload(res, name) {
+  const { modId, fileId } = res.auto;
+  const key = `${modId}:${fileId}`;
+  const registered = () => !!(state && state.nexus && state.nexus.nxmRegistered);
+  if (!registered() && !(state.settings && state.settings.nxmBrowserPrompted)) await askNxmRegistration();
+  if (!await call('openNexusFilePage', modId, fileId)) return;
+  clearNexusPending(key);
+  const timer = setTimeout(() => {
+    if (clearNexusPending(key)) toast(`No download arrived from Nexus for “${name}” — press the button again to retry.`, 'warn', 8000);
+  }, NEXUS_BROWSER_WAIT_MS);
+  nexusPending.set(key, { name, timer });
+  renderNexusPending();
+  if (registered()) {
+    toast(`“${name}” opened in your web browser — press Slow download there; it installs here automatically.`, 'info', 7000);
+  } else {
+    toast(`“${name}” opened in your web browser, but nxm:// links do not open in Mod Command X, so the download cannot come back here. Register the handler in Settings → Nexus Mods.`, 'warn', 10000);
+  }
 }
 
 function closeNexusDownload() {
@@ -3087,7 +3175,7 @@ async function nexusAutoTick() {
   // in the page, no navigation — until the user has completed it.
   let title = ''; try { title = view.getTitle(); } catch (_) {}
   if (NexusAutoclick.isChallengeTitle(title)) {
-    setNexusStrip('Nexus is checking this browser — complete the check yourself; the download continues afterwards.', 'warn');
+    setNexusStrip('Nexus is checking this browser — complete the check yourself; the download continues afterwards. If verification fails, switch to “My web browser” in Settings → Nexus Mods, or use Open in browser ↗.', 'warn');
     return;
   }
   if (NexusAutoclick.isLoginPage(url)) {
@@ -3101,6 +3189,9 @@ async function nexusAutoTick() {
     setNexusStrip('Auto-click paused — it only runs on the file’s download page. Click “Slow download” there to continue.', 'warn');
     return;
   }
+  // This page load showed a bot check: the agent stopped for good, so the page
+  // is not scripted again until the next navigation.
+  if (a.challengeDoc) return;
   if (a.clickLoads >= NEXUS_AUTO_MAX_CLICK_LOADS && !a.docClicked) {
     setNexusStrip('Click “Slow download” to continue — Mod Command X installs the file as soon as Nexus hands it over.', 'warn');
     return;
@@ -3119,7 +3210,10 @@ async function nexusAutoTick() {
     case 'waiting': setNexusStrip(`Waiting for Nexus to enable “Slow download”${secs}…`); break;
     case 'clicked': setNexusStrip(secs ? `Nexus starts the download${secs}…` : 'Download requested — waiting for Nexus to hand the file over…'); break;
     case 'login': setNexusStrip('Sign in to Nexus Mods (◈ Sign in, top right) — the download continues by itself afterwards.', 'warn'); break;
-    case 'challenge': setNexusStrip('Nexus is checking this browser — complete the check yourself. Auto-click stays out of it; press “Slow download” afterwards if it does not continue.', 'warn'); break;
+    case 'challenge':
+      a.challengeDoc = true;
+      setNexusStrip('Nexus is checking this browser — complete the check yourself. Auto-click stays out of it; press “Slow download” afterwards if it does not continue. If verification fails, switch to “My web browser” in Settings → Nexus Mods, or use Open in browser ↗.', 'warn');
+      break;
     case 'fallback': setNexusStrip('Click “Slow download” to continue — Mod Command X installs the file as soon as Nexus hands it over.', 'warn'); break;
     default: break;
   }
@@ -3180,7 +3274,7 @@ async function refreshNexusAccount() {
       const acct = document.querySelector('header a[href*="/users/"]');
       const name = acct ? (acct.getAttribute('title') || acct.textContent || '').trim() : '';
       return { loggedIn: !!(logout || avatar), name };
-    })()`, true);
+    })()`, false);
   } catch (_) { return; }
   if (!res) return;
   if (res.loggedIn) {
@@ -3220,7 +3314,7 @@ async function refreshNexusAccount() {
   });
   // A new document is a new page load for the auto-click's once-per-load rule.
   view.addEventListener('did-navigate', (e) => {
-    if (nexusDl.auto) nexusDl.auto.docClicked = false;
+    if (nexusDl.auto) { nexusDl.auto.docClicked = false; nexusDl.auto.challengeDoc = false; }
     if (NexusAutoclick.isLoginPage(e.url)) nexusDl.sawLogin = true;
   });
   const reload = $('#nexus-dl-reload');
@@ -4164,6 +4258,10 @@ window.zc.onEvent((payload) => {
     // A Nexus/GitHub download turned out to be a guided installer.
     fomodQueue.push(payload.job);
     processFomodQueue();
+    return;
+  }
+  if (payload.type === 'nxm-received') {
+    clearNexusPending(`${payload.modId}:${payload.fileId}`);
     return;
   }
   if (payload.type === 'first-scan') {

@@ -356,6 +356,16 @@
               </div>
               <input type="checkbox" id="chk-autoclick-nexus" class="switch" />
             </label>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Where to finish free downloads</span>
+                <p class="setting-note dim"><b>In-app panel</b> opens the file’s Nexus page inside Mod Command X (auto-click above applies). <b>My web browser</b> opens it in your default browser instead — where you are usually signed in already — and its <b>Slow download</b> comes back here through the nxm:// handler, so nxm:// links must open in Mod Command X. Use it if the Nexus check keeps failing in the panel.</p>
+              </div>
+              <select id="set-nexus-via" class="profile-select theme-select">
+                <option value="panel">In-app panel (auto-click)</option>
+                <option value="browser">My web browser</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -857,6 +867,21 @@
   </div>
 
   <div id="toast-stack" class="toast-stack"></div>
+
+  <!-- Free downloads finished in the web browser: one chip per file, until its nxm:// arrives. -->
+  <div id="nexus-pending" class="nexus-pending" aria-live="polite"></div>
+
+  <div id="nxm-browser-modal" class="zc-modal hidden">
+    <div class="zc-modal-box">
+      <div class="zc-modal-title">FINISH DOWNLOADS IN YOUR BROWSER</div>
+      <p class="zc-modal-sub">Nexus’s <b>Slow download</b> in your browser hands the file over as an nxm:// link — and nxm:// links do not open in Mod Command X yet, so the download would not come back here.</p>
+      <p class="zc-modal-sub dim">Registering makes nxm:// links open in Mod Command X. It takes them over from any other mod manager on this PC, including the main Mod Command; you can undo it in Settings → Nexus Mods.</p>
+      <div class="zc-modal-actions">
+        <button class="btn ghost" id="btn-nxm-browser-skip">Open the page anyway</button>
+        <button class="btn" id="btn-nxm-browser-register">Register and continue</button>
+      </div>
+    </div>
+  </div>
 
   <div id="progress-toast" class="progress-toast hidden">
     <div id="progress-label" class="progress-label">Downloading…</div>
