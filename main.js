@@ -81,7 +81,11 @@ const report = require('./lib/report');
 // installed. It carries no copy of that UI — see lib/sdk-link.js and
 // docs/SDK_LINK.md.
 const sdkLink = require('./lib/sdk-link');
-const { configureNexusSession } = require('./lib/nexus-browser');
+const { configureBrowserIdentity, configureNexusSession } = require('./lib/nexus-browser');
+// Before 'ready': every renderer, out-of-process iframe and worker (the Nexus
+// panel's Cloudflare Turnstile frame included) presents the plain Chrome user
+// agent, not Electron's — see lib/nexus-browser.js.
+configureBrowserIdentity(app);
 
 // App data (settings, staging, indexes) lives in the OS per-user app-data
 // folder — %APPDATA%\ModCommandX on Windows — never beside the exe.
@@ -901,10 +905,9 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   log('info', `app start v${app.getVersion()} on ${process.platform} ${require('os').release()}`);
-  // The Nexus panel presents the bundled Chromium's plain Chrome user agent, not
-  // Electron's (which names Electron and this app and makes Cloudflare treat
-  // the panel as a bot). See lib/nexus-browser.js.
-  try { configureNexusSession(session); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
+  // The Nexus panel's session uses the same plain Chrome user agent as the
+  // app-wide fallback set above. See lib/nexus-browser.js.
+  try { configureNexusSession(session, app); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
   // Load the stored Nexus API key (migrating a plaintext one to the OS store)
   // and look up who it belongs to in the background.
   try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
