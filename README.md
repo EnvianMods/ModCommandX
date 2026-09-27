@@ -26,9 +26,20 @@ never on Nexus Mods — and differs from the upstream app in two ways:
 > before changing mods. **Removing a mod in Mod Command deletes its stored copy for X
 > too** (X then shows it as "stored copy missing": download it again, or uninstall it).
 
-## Run it
+## Install
 
-Double-click **`Mod Command X.bat`**, or from this folder:
+Download `ModCommandX-v<version>.zip` from the
+[releases page](https://github.com/EnvianMods/ModCommandX/releases), unzip it somewhere
+permanent and run **`ModCommandX.exe`** (portable, nothing to install; Windows
+SmartScreen may warn because the exe is unsigned — "More info" → "Run anyway"). The zip
+also holds `Uninstall Mod Command X.exe`, `README.txt` and `CHANGELOG.md`. A Linux
+`ModCommandX.AppImage` is attached to the same releases. To build the exe yourself, see
+[Build from source](#build-from-source).
+
+## Run from source
+
+With [Node.js](https://nodejs.org/) 22.12+ and `npm ci` done once, double-click
+**`Mod Command X.bat`**, or from this folder:
 
 ```
 npm start
@@ -64,9 +75,6 @@ automatically for IoStore package inspection; a different copy can be selected i
 - What this protects against: other Windows users and offline theft of the disk or a
   copied profile. It does **not** protect against malware running as you — anything
   running under your account can ask DPAPI to decrypt, as it could for your browser.
-- Owner tools (`owner-tools/`) take GitHub tokens from `gh auth login` (the GitHub CLI's
-  own credential store) when no token file or `GITHUB_TOKEN` is set; token files are
-  git-ignored and excluded from source zips.
 
 ## Features
 
@@ -232,7 +240,7 @@ automatically for IoStore package inspection; a different copy can be selected i
   Zero Company Mod SDK (Settings → ◆ SDK; Detect looks beside the install and beside
   the game folder) and the Forge view hosts the SDK's own UI, loaded from the SDK
   folder against its embed contract (`<sdk>/tools/sdk-ui/manifest.json`; the host's
-  side is `lib/sdk-link.js`, design in `docs/SDK_LINK.md`). Mod Command X ships no copy
+  side is `lib/sdk-link.js`). Mod Command X ships no copy
   of the panel, so an SDK update needs no Mod Command X release. With no SDK linked the
   Forge item stays in the rail, dimmed, and opens the "Get the SDK" page (what it is,
   what it needs — including Node.js 22.12+ — one **Get** button, "point at an installed SDK", and a note that the SDK is not open source). That button's
@@ -650,13 +658,20 @@ always under HKCU), `--install-dir`, `--dev-dir`, `--process-names`; `--dry-run`
 `--yes`, `--delete-library`, `--close-running`, `--report <json>`, `--no-self-delete`,
 `--screenshot <png>`.
 
-## Releases
+## Build from source
+
+Double-click **`Build.bat`** (needs Node.js 22.12+ and an internet connection): it
+installs the build dependencies, fetches the bundled tools from their official sources
+(`build/fetch-tools.js`, see [Third-party components](#third-party-components-in-the-shipped-build))
+and copies the finished `ModCommandX.exe` and `Uninstall Mod Command X.exe` next to
+itself. The same from a terminal:
 
 ```
-npm run dist
+npm ci
+npm run build-exe
 ```
 
-produces `release/ModCommandX.exe` — a single portable executable — and, next to it,
+`npm run build-exe` (or `npm run dist` once the tools are in `tools/`) produces `release/ModCommandX.exe` — a single portable executable — and, next to it,
 `release/Uninstall Mod Command X.exe` (see [Uninstalling](#uninstalling)). When run, the app keeps
 its settings in `%APPDATA%\ModCommandX` and the mod archive in the game folder under
 `ModCommandArchive` (shared with Mod Command) — nothing is written beside the exe (the
@@ -670,46 +685,13 @@ again on exit) and runs it from there — so a user whose antivirus quarantines 
 file such as `ffmpeg.dll` has one stable path to add to their exclusions, and the app
 names that folder in an error dialog if part of the runtime is missing when it starts.
 
-Shipping structure:
+Release package:
 - version lives in `package.json` (X restarted at 1.0.0; `modCommandCompat` records the
   upstream feature level, 1.9.14, which SDK manifests' `minModCommand` is checked
   against); per-version notes in `CHANGELOG.md`
 - the release asset is `ModCommandX-v<version>.zip`, containing `ModCommandX.exe` +
   `Uninstall Mod Command X.exe` + `README.txt` + `CHANGELOG.md` (the exe filename stays
   constant across versions so nxm:// registrations survive updates)
-
-## Releasing
-
-Mod Command X is published **only** as GitHub releases of
-`github.com/EnvianMods/ModCommandX` — never on Nexus Mods, and never to any of the
-upstream project's repos or files. The local repo has no remote by default.
-
-1. Bump `version` in package.json and `RELEASE_VERSION.txt`, add a CHANGELOG entry, commit.
-2. `npm run dist`, zip `ModCommandX.exe` + `Uninstall Mod Command X.exe` (both in `release/`)
-   + `build/README.txt` + CHANGELOG.md as `ModCommandX-v<version>.zip`;
-   optionally `node owner-tools/update-featured-authors/package-source-release.js` for a
-   binary-free `ModCommandX-Source-v<version>.zip`.
-3. `"Publish Release.bat" <version> <path-to-zip>` — creates tag/release `v<version>`
-   on EnvianMods/ModCommandX and uploads the zip (refused if it lacks the uninstaller;
-   more files after the zip go up as extra assets; `--notes-file notes.md` sets multi-line
-   notes, and a release the Linux CI job already created gets its title and notes replaced).
-   That **is** the announcement:
-   installed copies check `/releases/latest` hourly and show their update banner,
-   linking to that release page. (A missing or private repo is simply no banner.)
-4. Optionally `"Archive Release.bat" <version> <build-zip> <source-zip> --notes "..."`
-   — pushes the version archive to github.com/EnvianMods/ModCommandXArchive.
-
-The remaining owner tools (`publish-release.js`, `archive-release.js`,
-`push-handoff.js`) refuse the upstream targets (`EnvianMods/ZeroCompanyModCommand`,
-`…Archive`, `SWZeroCompanyFeaturedAuthors`) even when passed with `--repo`. The
-upstream tools that publish shared files (featured authors, GitHub allowlist, EA
-compat, launcher version) and upload to Nexus are not part of X.
-
-- **HANDOFF.md is never published.** Internal working notes are untracked (listed in
-  `.gitignore`); `push-handoff.js` / `"Push Handoff.bat"` keeps a copy in the private
-  archive repo at `docs/HANDOFF.md`. As a backstop, `publish-release.js` lists each
-  .zip before uploading it and refuses any zip with an entry matching `/HANDOFF/i`
-  (`node publish-release.js --check-only <zip>` runs that check alone).
 
 ## Third-party components in the shipped build
 
@@ -747,8 +729,7 @@ X reads the same community files the upstream app does, and never writes them:
 `ea-compat.json` and the `sdk` block of `launcher-version.json` from
 `EnvianMods/SWZeroCompanyFeaturedAuthors`, and the ZCSDK Runtime's `latest.json`.
 
-## Ideas for later
+## License
 
-- Conflict-aware profile switching (warn when a profile enables a confirmed-conflicting pair)
-- Linux/Proton/Steam Deck support (Electron builds cross-platform, but deploy paths,
-  nxm registration, and 7-Zip/tar handling are Windows-specific today)
+Mod Command X is released under the MIT License (`LICENSE`). The bundled tools keep their
+own licenses; see [Third-party components](#third-party-components-in-the-shipped-build).

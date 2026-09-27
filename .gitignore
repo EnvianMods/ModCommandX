@@ -30,3 +30,19 @@ build/uninstaller/obj/
 
 # Epic/RAD's Oodle dll is not ours to redistribute - never bundle it
 tools/oo2core*.dll
+
+# Owner-only and internal files - kept locally, never on the public repo
+# (package-source-release.js packs only git-tracked files; publish-release.js
+# refuses a zip that carries any of these)
+/owner-tools/
+/reference/
+/RELEASING.md
+HANDOFF*
+/DESCRIPTION.txt
+/RELEASE_VERSION.txt
+/docs/SDK_LINK.md
+/build/make-icon.py
+/build/icon-1024.png
+/mod-placeholder-640.png
+/mod-placeholder-1280.png
+/docs/screenshots/

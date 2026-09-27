@@ -336,6 +336,11 @@ from upstream, before its release)*
   the ZCSDK Runtime now ship in `resources\tools\licenses`, and the README
   lists each bundled tool with its version, source and license.
 
+**Source**
+- The repository and the source package hold only what is needed to
+  understand, build and run Mod Command X; the README covers installing,
+  running from source and building the exe.
+
 ---
 
 # Inherited history — Zero Company Mod Command up to 1.9.14
