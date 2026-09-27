@@ -1,17 +1,70 @@
-# Zero Company Mod Command — Changelog
+# Mod Command X — Changelog
 
-## Unreleased
+## Mod Command X 1.0.0 (unreleased)
+
+Mod Command X is a private side-project build of Zero Company Mod Command,
+forked from upstream 1.9.14 and distributed only through the releases of
+github.com/EnvianMods/ModCommandX. Numbering restarts at 1.0.0; the upstream
+feature level it carries is recorded as `modCommandCompat: 1.9.14` in
+package.json (the version Mod SDK manifests are checked against).
+
+**Its own identity — installs side by side and shares nothing**
+- Named Mod Command X everywhere: window, dialogs, the portable
+  `ModCommandX.exe` (unpacked to `%TEMP%\ModCommandX`), the AppImage, the
+  support-report file name and the `nxm://` handler's friendly names (Linux:
+  `mod-command-x.desktop`).
+- Own app data in `%APPDATA%\ModCommandX` and own Electron profile in
+  `%APPDATA%\Mod Command X` — a separate single-instance lock, separate
+  embedded-Nexus cookies, separate caches. The upstream app's
+  `ZeroCompanyModCommand` data (and its older `ZeroCompanyModCommand-data`)
+  is never migrated.
+- Own game-side archive, `<game>\ModCommandXArchive`. The upstream
+  `ModCommandArchive` / `ZeroCompanyModArchive` are never auto-restored,
+  renamed, merged or deleted; importing from them is a deliberate Import
+  existing → "Import from a manager folder…", which copies.
+- Identifies itself to Nexus Mods as `Mod Command X` (User-Agent
+  `ModCommandX/<version> (+github.com/EnvianMods/ModCommandX)`).
+- Update check reads the latest GitHub release of EnvianMods/ModCommandX
+  (tag `vN.N.N`) and links only to that release page; a missing or private
+  repo, or being offline, is silent. The "Get the SDK" link still comes from
+  the `sdk` block of the shared launcher-version.json — nothing else in that
+  file is read, so the upstream update banner never appears.
+- Owner tools publish only to EnvianMods/ModCommandX and
+  EnvianMods/ModCommandXArchive and refuse the upstream repos; the tools that
+  write shared upstream files or upload to Nexus are removed.
+- Running X and the upstream app against the same game install at the same
+  time is not supported: both deploy into the same game mod folders.
+
+**Nexus Mods: personal API key instead of OAuth sign-in**
+- Settings → Nexus Mods and first-run setup step 2 take your personal API key
+  again (password field, **Get my API key ↗**, Save / Verify / Clear, with the
+  walkthrough for finding the key on next.nexusmods.com).
+- The key is validated against `/v1/users/validate.json` before it is stored,
+  encrypted with your OS account (DPAPI via safeStorage; plaintext only when
+  the OS store is unavailable), sent only to nexusmods.com as the `apikey`
+  header, and never shown, logged or put in a diagnostics report. X never
+  deletes a stored key — only Clear does.
+- Name and premium status come from validate.json; premium still decides
+  direct download vs. the website's "Mod Manager Download".
+- Adult content still follows your Nexus account: the v2 GraphQL
+  `preferences { adult }` query is sent with the API key; with no key, or if
+  it cannot be read, adult-rated mods stay hidden.
+- Kept from upstream 1.9.13/1.9.14: shared Nexus quota and rate-limit handling
+  (`lib/nexus-http.js`), UE4SS from Nexus by default, UE4SS mods with their
+  own paks.
+
+### Also in 1.0.0 — work that followed upstream 1.9.14
 
 **Install a mod's optional files — and switch them on and off one by one**
 - Most Nexus pages offer more than the main download: alternative textures, a
   compatibility patch, a hotfix. Until now installing one of those *replaced*
-  the mod, because Mod Command treated every file on a page as the same mod.
+  the mod, because Mod Command X treated every file on a page as the same mod.
 - Every Nexus-linked mod on the Command Deck now has an **⊕ Optional files**
   button. It opens the mod's page files — the optional, update and
   miscellaneous ones — with their size, date and the author's own description,
   and marks anything you already have. Press **⭳ Install** and it is added
-  *alongside* the mod, not over it. (Not signed in? The button tells you to sign
-  in first. Free account? It opens the mod's files page in the app, exactly like
+  *alongside* the mod, not over it. (No API key? The button asks you to add
+  one first. Free account? It opens the mod's files page in the app, exactly like
   any other download — press "Mod Manager Download" on the file you want.)
 - Installed optional files fold away under the mod they belong to: the row shows
   **▸ 2 optional files**, and opening it lists each one indented, with its own
@@ -26,7 +79,7 @@
   be quietly swapped for the mod's newest main download.
 - **Installed a mod's extras yourself? Group them the same way.** None of this
   needs Nexus. **⊕ Optional files** is now on *every* mod on the Command Deck,
-  whether or not it came from Nexus and whether or not you are signed in, and it
+  whether or not it came from Nexus and whether or not you have an API key, and it
   has a second half — **ALREADY INSTALLED** — listing the other mods you have.
   Press **⇲ Group under &lt;mod&gt;** and that mod slides into the nested list
   right there, looking and behaving exactly like a file downloaded from a mod
@@ -40,6 +93,14 @@
 - Sensible limits: a mod can only be grouped under one other mod, the nesting
   never goes more than one level deep, and a mod's own other versions from the
   same Nexus page are not offered — those belong to the ⧗ version picker.
+
+---
+
+# Inherited history — Zero Company Mod Command up to 1.9.14
+
+Everything below is the upstream Zero Company Mod Command's own changelog,
+kept as it was written. "Mod Command" there means the upstream app; its OAuth
+sign-in (1.9.13) is replaced in X by the API key described above.
 
 ## v1.9.14 (2026-09-23)
 

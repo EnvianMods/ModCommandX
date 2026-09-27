@@ -1,14 +1,20 @@
 # The SDK link
 
-Mod Command ships **no Mod SDK panel**. If the Zero Company Mod SDK is
-installed and pointed at from *Settings → ◆ SDK*, Mod Command **hosts the SDK's
+> **Mod Command X note.** This document is inherited from the upstream Zero
+> Company Mod Command and describes the host side as Mod Command X implements
+> it. X differs only where noted: `minModCommand` is checked against
+> `modCommandCompat`, and X reads nothing but the `sdk` block of the shared
+> `launcher-version.json`.
+
+Mod Command X ships **no Mod SDK panel**. If the Zero Company Mod SDK is
+installed and pointed at from *Settings → ◆ SDK*, Mod Command X **hosts the SDK's
 own UI** in a fifth view called ◆ Forge. Nothing else changes: with no SDK
-linked the Forge item is dimmed and opens "Get the SDK", and Mod Command is
+linked the Forge item is dimmed and opens "Get the SDK", and Mod Command X is
 otherwise exactly what it was.
 
 The reason for the shape is release cadence. The SDK moves far faster than Mod
 Command, and its UI is written against its own CLI. Hosting it instead of
-copying it means **a new SDK needs no new Mod Command.**
+copying it means **a new SDK needs no new Mod Command X.**
 
 Everything on the host's side lives in one file: `lib/sdk-link.js`.
 
@@ -39,7 +45,7 @@ The link reads `<sdk>/tools/sdk-ui/manifest.json`:
 | `entry` | yes | loaded as `file://…/<entry>?embedded=1` |
 | `preload` | yes | set as the hosted view's preload, by absolute path |
 | `cliModule` | yes | `require()`d, and its `createHandlers(ctx)` registered |
-| `minModCommand` | no | compared against `package.json`'s `version` |
+| `minModCommand` | no | compared against `package.json`'s `modCommandCompat` (the upstream feature level) |
 | `updateUrl` | no | where the SDK publishes `sdk-version.json`. **Absent ⇒ no check at all**, and the card says *"This SDK does not publish an update file."* See below. |
 
 All four paths resolve relative to `tools/sdk-ui/`, and a path that resolves
@@ -51,12 +57,15 @@ host's `require()` or preload somewhere else in the tree.
 Two independent gates, both checked before anything is loaded:
 
 * **contract** — an exact match. `contract > 1` means the SDK is newer than
-  this host understands: *"That SDK needs a newer Mod Command … Update Mod
+  this host understands: *"That SDK needs a newer Mod Command X … Update Mod
   Command."* `contract < 1` means the SDK is older: *"That SDK is too old to
   embed … Update the SDK."*
-* **minModCommand** — `package.json`'s version must be greater than or equal
-  to it, compared segment by segment as numbers: *"That SDK needs Mod Command
-  2.0.0 or newer — this is 1.9.12."*
+* **minModCommand** — names the upstream Zero Company Mod Command's version
+  line. Mod Command X restarted its own numbering at 1.0.0, so it is checked
+  against `package.json`'s `modCommandCompat` (the upstream feature level X
+  carries, 1.9.14) rather than X's own version — greater than or equal,
+  compared segment by segment as numbers: *"That SDK needs Mod Command 2.0.0 or
+  newer — Mod Command X is compatible with 1.9.14."*
 
 `sdkUiVersion` is **not** a gate. It is display only. The SDK is free to ship
 any version it likes as long as the contract number holds.
@@ -74,7 +83,7 @@ nothing compares it. When the SDK has a `docs/CHANGELOG.md`, the card also shows
 `lib/sdk-link.js`, the renderer sends none).
 
 **Every failure ends in the same place:** the ◆ SDK card shows the sentence, the
-◆ Forge nav item stays dimmed, and the rest of Mod Command is untouched. Nothing in
+◆ Forge nav item stays dimmed, and the rest of Mod Command X is untouched. Nothing in
 `lib/sdk-link.js` is allowed to throw into the host — `link()` catches, tears
 down whatever it had half-built, and returns `{ linked: false, error }`. Same
 for a `cliModule` that loads but exports no `createHandlers`, or whose own
@@ -92,7 +101,7 @@ for a `cliModule` that loads but exports no `createHandlers`, or whose own
    package `name`, kept as a fallback)
 3. `%ProgramData%\ZeroCompanyModSDK\install.json` → `sdkPath`
    (reserved for the SDK's future installer)
-4. folders named `ZeroCompanyModSDK*` **beside the Mod Command install**
+4. folders named `ZeroCompanyModSDK*` **beside the Mod Command X install**
 5. folders named `ZeroCompanyModSDK*` beside the game folder, and
    `<game>\ZeroCompanyModSDK`
 
@@ -132,9 +141,9 @@ denied. Anything the SDK wants opened in the OS goes through its own
 
 ## The SDK update file
 
-The SDK publishes one small JSON file and Mod Command reads it. The **URL is
-in the manifest, not in Mod Command** — `updateUrl` — so the SDK can move its
-own update file without a Mod Command release. Mod Command hard-codes nothing
+The SDK publishes one small JSON file and Mod Command X reads it. The **URL is
+in the manifest, not in Mod Command X** — `updateUrl` — so the SDK can move its
+own update file without a Mod Command X release. Mod Command X hard-codes nothing
 about it.
 
 ```json
@@ -161,7 +170,7 @@ about it.
 **Comparison.** `latest` versus the INSTALLED version, which is
 `<sdk>/tools/version.json` → `"sdk"` — the SDK's own single version constant,
 not any app's `package.json`. The comparator is the same three-segment numeric
-one `lib/launcher-update.js` uses for Mod Command's own check; a tie is not an
+one `lib/launcher-update.js` uses for Mod Command X's own check; a tie is not an
 update.
 
 **Channel choice.** The button opens `preferred`'s url, and **falls back to the
@@ -190,14 +199,14 @@ check pushes a `sdk-update` event when it lands.
 
 **One check, two consumers.** The implementation is in the **SDK's**
 `lib/sdk-cli.js` (`sdk:1:check-update`), so the standalone SDK app gets the
-same check from the same code. Mod Command runs it for its own badge and then
+same check from the same code. Mod Command X runs it for its own badge and then
 pushes the answer into the hosted page on the SDK's event channel, so the
 panel's own Doctor line agrees with the host's badge without a second fetch.
 
 ## What the hosted page offers
 
 Everything below is the **SDK's** page (1.0.3 / internal 1.29.6), running in the
-hosted view; Mod Command adds none of it and needs no release for it. The page's
+hosted view; Mod Command X adds none of it and needs no release for it. The page's
 rail: **Forge** (the recipe gallery with search, group and needs filters, card
 previews, and the console with the build **stepper** — preflight, author, cook,
 convert, package, verify — which explains a failure from the SDK's own errors
@@ -243,7 +252,7 @@ few things on the page:
 
 The SDK's Unreal, game, retoc and reflection paths are the **SDK's** settings,
 kept in the SDK's own config and edited in the hosted page's Settings view —
-Mod Command stores none of them. When an SDK is linked, the ◆ SDK card shows a
+Mod Command X stores none of them. When an SDK is linked, the ◆ SDK card shows a
 **Paths & dependencies…** button (with a one-line note saying so): it switches
 to the ◆ Forge view and pushes `{ type: 'open-settings' }` into the hosted page
 on the SDK's event channel (`EVENT_CHANNEL` from the linked `lib/sdk-cli.js`) —
@@ -268,7 +277,7 @@ Five, in `data/manager-data.json`:
 | `sdkCliPath` | the checkout the SDK's CLI runs against. `null` = same as `sdkPath`. Separate so that pointing the panel at a second checkout — which a developer with more than one does — cannot tear down the link. |
 | `sdkShowCommand` | the SDK panel's "show CLI command" toggle. |
 | `sdkUpdate` | the update check's cached `{ info, at }`, so the 60-minute TTL survives a restart. Dropped on link when its `info.installed` is not the linked SDK's installed version, so linking another SDK — or unzipping a newer one over the old folder — never shows the previous tree's version for up to an hour. |
-| `sdkAssetLinks` | `{ sdk: { url, updateUrl }, at }` — the last `sdk` block the asset file ever carried, written every time a fetch yields one. It is what an **offline** Mod Command shows a Get button from. Never a default, only a memory: a fresh install that has never reached the network shows the dim line instead. |
+| `sdkAssetLinks` | `{ sdk: { url, updateUrl }, at }` — the last `sdk` block the asset file ever carried, written every time a fetch yields one. It is what an **offline** Mod Command X shows a Get button from. Never a default, only a memory: a fresh install that has never reached the network shows the dim line instead. |
 
 `sdkShowCommand` and `sdkUpdate` are the **SDK's** settings. They live here only
 because the SDK's handler map asks its host to store them.
@@ -294,7 +303,7 @@ to point at the wrong thing. Mitigations, and their limits:
   navigate out of the SDK folder and cannot open popups. The privileged half is
   the module in the main process, not the page.
 * nothing is auto-linked from the network, and no SDK is downloaded or updated
-  by Mod Command
+  by Mod Command X
 
 If that trust is ever not acceptable, the fix is not a tighter manifest check —
 it is signing the SDK, or moving the CLI behind a process boundary. Neither is
@@ -302,10 +311,12 @@ in contract 1.
 
 ## Where the SDK comes from, and the ◆ Forge nav item
 
-**Mod Command hard-codes no download destination — not for the SDK, and not
-for itself.** There is no URL table in `lib/sdk-link.js`. Where to get the SDK
-is *published*, in the asset repo file that already announces Mod Command's own
-updates:
+**Mod Command X hard-codes no download destination for the SDK.** There is no
+URL table in `lib/sdk-link.js`. Where to get the SDK is *published* by the
+upstream owner, in the shared asset repo file that also announces the upstream
+Mod Command's updates. Mod Command X reads **only the `sdk` block** of it —
+its own updates come from the GitHub releases of EnvianMods/ModCommandX
+(`lib/launcher-update.js`), so the upstream `latest/url/notes` are ignored:
 
 `https://raw.githubusercontent.com/EnvianMods/SWZeroCompanyFeaturedAuthors/main/launcher-version.json`
 
@@ -362,19 +373,16 @@ Zero Company Mod SDK on Nexus"*, `github.com` → *"… on GitHub"*, anything el
 Nexus and open GitHub. The ◆ SDK card's Get link is the same url and the same
 rule. With **no url at all** the button is hidden and the pitch shows one dim
 line — *"The download link could not be fetched — check your connection and try
-again."* — while **Point Mod Command at an installed SDK** stays, because that
+again."* — while **Point Mod Command X at an installed SDK** stays, because that
 path needs no network.
 
 > Note: `open-external` only opens `nexusmods.com`, `github.com` and
 > `discord.gg`. A published url on any other host gets the neutral label and is
 > refused at the door — deliberately, that allow-list is a security control.
 
-**Publishing it.** `owner-tools/update-featured-authors/update-launcher-version.js`
-reads the live file before every write and **carries the `sdk` block through**,
-so announcing a launcher version can never silently drop the SDK's link.
-`--sdk-url` / `--sdk-update-url` set it, `--sdk-only` rewrites *only* that block
-and leaves `latest/url/notes/publishedAt` exactly as published, `--show` prints
-it, and `--dry-run` prints the body it would PUT and sends nothing.
+**Publishing it.** The file is the upstream project's and is published with the
+upstream owner-tools (`update-launcher-version.js`), which are deliberately not
+part of Mod Command X: X only ever reads it.
 
 **The ◆ Forge nav item is always in the rail.** With no SDK linked it is
 *dimmed* and opens the "Get the SDK" view — one paragraph on what the SDK is, a
@@ -382,19 +390,19 @@ table of what it needs on the machine (UE 5.6.x, MSVC + Windows SDK 10.0.26100,
 .NET 4.8.1 Developer Pack, retoc, Node.js 22.12 or newer, Python 3.8+, the game),
 the one **Get** button above, a line saying the SDK is not open source (all
 rights reserved; the mods you make with it are yours; see its LICENSE), and
-**Point Mod Command at an installed SDK**, which jumps to the ◆ SDK card in
+**Point Mod Command X at an installed SDK**, which jumps to the ◆ SDK card in
 Settings. Once an SDK is linked the same item stops being dim and
 is the live Forge. A modder who has never heard of the SDK has to be able to
 find out it exists; hiding the entry was the wrong answer.
 
 ## Known rough edges
 
-* A `WebContentsView` floats **above** the host page, so a Mod Command modal or
+* A `WebContentsView` floats **above** the host page, so a Mod Command X modal or
   toast opened while the Forge view is showing would be covered by it. Today
   nothing opens a modal from that view.
 * Focus and keyboard go to whichever of the two web contents was clicked last;
   the host's global shortcuts do not reach the hosted page.
 * DevTools for the hosted page are separate from the host's. `sdk-link-devtools`
   opens them detached.
-* The hosted page's CSP is the SDK's (`default-src 'self'`), not Mod Command's,
+* The hosted page's CSP is the SDK's (`default-src 'self'`), not Mod Command X's,
   and it is enforced against the SDK folder's own origin.

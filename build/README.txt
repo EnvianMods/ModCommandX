@@ -1,26 +1,35 @@
-ZERO COMPANY MOD COMMAND v1.0.9
-A dedicated mod manager & launcher for STAR WARS: Zero Company
-by Envian Mods
+MOD COMMAND X v1.0.0
+A private side-by-side build of Zero Company Mod Command
+for STAR WARS: Zero Company
+
+Mod Command X is distributed only through the releases of
+https://github.com/EnvianMods/ModCommandX (never on Nexus Mods). It installs
+next to the regular Zero Company Mod Command and shares nothing with it: its
+own settings, its own mod archive, its own Nexus identity and its own update
+check. Do not run both against the same game install at the same time - they
+deploy into the same game mod folders.
 
 QUICK START
 -----------
-1. Put ZeroCompanyModCommand.exe anywhere you like (somewhere permanent is best)
-   and run it. Windows SmartScreen may warn because the exe is unsigned:
-   click "More info" -> "Run anyway".
+1. Put ModCommandX.exe anywhere you like (somewhere permanent is best) and run
+   it. Windows SmartScreen may warn because the exe is unsigned: click
+   "More info" -> "Run anyway".
 2. The game is found automatically through Steam. If not, set the game folder
    in Settings.
-3. Optional but recommended: in Settings -> Nexus Mods, press "Sign in with
-   Nexus Mods". Your browser opens on nexusmods.com, you approve Mod Command
-   there, and the app picks it up - it never sees your password and stores
-   only the sign-in tokens Nexus issues, encrypted with your Windows account.
+3. Optional but recommended: in Settings -> Nexus Mods, press "Get my API key".
+   On the Nexus page (log in if asked) scroll to "Personal API Key", press
+   "Request an API key" if you don't have one yet, copy it, paste it into the
+   field and press Save. The key is checked with Nexus first, then stored
+   encrypted with your Windows account and only ever sent to nexusmods.com.
    Then press "Register handler". After that, the "Mod Manager Download"
-   buttons on nexusmods.com install mods straight into the manager. You can
-   revoke the app's access at any time from your Nexus account settings.
+   buttons on nexusmods.com install mods straight into Mod Command X. (Only one
+   app can own those buttons at a time: registering here takes them from the
+   regular Mod Command, and vice versa.)
 4. Browse mods in the Holonet tab, or drag & drop mod archives onto the window.
 
-The manager keeps its settings in %APPDATA%\ZeroCompanyModCommand and your mod
-archive (library, backups, archived versions) in the game folder under
-"ModCommandArchive" - nothing is written next to the exe, so you can move or
+Mod Command X keeps its settings in %APPDATA%\ModCommandX and your mod archive
+(library, backups, archived versions) in the game folder under
+"ModCommandXArchive" - nothing is written next to the exe, so you can move or
 replace the exe freely. Reinstalling a mod at another version joins the same
 entry: use its "versions" button to roll back or try an archived version.
 
@@ -29,10 +38,10 @@ NOTES
 - The Holonet has two tabs: Nexus Mods, and GitHub - GitHub mods curated
   by Envian Mods. Installed mods are checked for updates automatically.
 - The Forge tab in the side rail hosts the Zero Company Mod SDK (a separate
-  download for making mods) once you point Mod Command at it in
+  download for making mods) once you point Mod Command X at it in
   Settings -> SDK. Without the SDK it explains what it is and where to get it.
-- Adult-rated content follows your Nexus Mods account preference; there is no
-  separate switch in the app.
+- Adult-rated content follows your Nexus Mods account preference (read with
+  your API key); there is no separate switch in the app.
 - .zip, .7z and .rar archives all work out of the box (7-Zip ships with the app).
 - UE4SS (needed for Lua/DLL mods) installs with one click in Settings, using
   the "UE4SS for Star Wars Zero Company" package from Nexus Mods.
@@ -57,9 +66,4 @@ app's resources\tools folder. None of it is part of the app's own source code.
 - Electron (the application framework) and the npm package extract-zip, both
   declared in package.json.
 
-Source code: https://github.com/EnvianMods/ZeroCompanyModCommand
-
-SUPPORT
--------
-Discord (requests, bug reports, mod submissions): https://discord.gg/YNPCA6qRq3
-Support the mods (PayPal): https://paypal.me/Envian707
+Source code and releases: https://github.com/EnvianMods/ModCommandX
