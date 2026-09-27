@@ -692,7 +692,9 @@ upstream project's repos or files. The local repo has no remote by default.
    binary-free `ModCommandX-Source-v<version>.zip`.
 3. `"Publish Release.bat" <version> <path-to-zip>` — creates tag/release `v<version>`
    on EnvianMods/ModCommandX and uploads the zip (refused if it lacks the uninstaller;
-   more files after the zip go up as extra assets). That **is** the announcement:
+   more files after the zip go up as extra assets; `--notes-file notes.md` sets multi-line
+   notes, and a release the Linux CI job already created gets its title and notes replaced).
+   That **is** the announcement:
    installed copies check `/releases/latest` hourly and show their update banner,
    linking to that release page. (A missing or private repo is simply no banner.)
 4. Optionally `"Archive Release.bat" <version> <build-zip> <source-zip> --notes "..."`
