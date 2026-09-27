@@ -85,6 +85,7 @@ const report = require('./lib/report');
 // docs/SDK_LINK.md.
 const sdkLink = require('./lib/sdk-link');
 const { configureBrowserIdentity, configureNexusSession, learnClientHints } = require('./lib/nexus-browser');
+const { configureWebPermissions, lockWebContentsDevices } = require('./lib/web-permissions');
 // Before 'ready': every renderer, out-of-process iframe and worker (the Nexus
 // panel's Cloudflare Turnstile frame included) presents the plain Chrome user
 // agent, not Electron's — see lib/nexus-browser.js.
@@ -893,6 +894,8 @@ function createWindow() {
 // lets a non-premium user download without leaving the app — the website mints
 // the signed nxm link from their logged-in session, exactly as in a real browser.
 app.on('web-contents-created', (_e, contents) => {
+  // No page — ours, the SDK's or Nexus's — gets to pick a Bluetooth device.
+  lockWebContentsDevices(contents);
   if (contents.getType() !== 'webview') return;
   const catchNxm = (url) => {
     if (typeof url === 'string' && url.startsWith('nxm://')) {
@@ -918,6 +921,11 @@ app.whenReady().then(() => {
   // The Nexus panel's session uses the same plain Chrome user agent as the
   // app-wide fallback set above. See lib/nexus-browser.js.
   try { configureNexusSession(session, app); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
+  // Deny-by-default web permissions for the Nexus panel and the app window
+  // (Electron grants everything otherwise). An nxm:// that reaches the OS
+  // handoff instead of will-navigate is routed to handleNxm in-process. See
+  // lib/web-permissions.js.
+  try { configureWebPermissions(session, { log, onNxm: (url) => handleNxm(url) }); } catch (err) { log('error', `web permission setup failed: ${err.message}`); }
   // Load the stored Nexus API key (migrating a plaintext one to the OS store)
   // and look up who it belongs to in the background.
   try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }

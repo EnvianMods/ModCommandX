@@ -80,6 +80,16 @@ package.json (the version Mod SDK manifests are checked against).
   panel's login (cookies, site data, cache).
 - Owner tools fall back to `gh auth token` (the GitHub CLI's credential store)
   instead of needing a token file.
+- Web permissions are deny-by-default (`lib/web-permissions.js`). Electron
+  otherwise grants every request, so the Nexus website panel's ad frames could
+  use the camera, microphone, location, notifications, MIDI, HID/serial/USB,
+  clipboard reading, screen capture or external protocol handlers. The panel
+  now allows only clipboard writes from nexusmods.com and fullscreen for
+  nexusmods.com / YouTube video; the app window allows only clipboard writes
+  (Copy support report, the SDK's copy buttons). Device choosers are
+  cancelled. An `nxm://` link never leaves the app — it goes straight to the
+  installer — and other external protocols are refused. Denials are logged
+  once per origin at debug level (origin only) in the session log.
 
 **One click to download — premium or free**
 - Every Nexus download button is now one click: Holonet ⭳ Install and
