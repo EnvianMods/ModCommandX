@@ -1,12 +1,12 @@
 @echo off
 setlocal EnableExtensions
-title Zero Company Mod Command - build from source
+title Mod Command X - build from source
 cd /d "%~dp0"
 echo.
-echo  ZERO COMPANY MOD COMMAND - build from source
-echo  ============================================
-echo  Builds the portable ZeroCompanyModCommand.exe on your own PC from the source
-echo  in this folder - the same source as github.com/EnvianMods/ZeroCompanyModCommand.
+echo  MOD COMMAND X - build from source
+echo  ================================
+echo  Builds the portable ModCommandX.exe on your own PC from the source
+echo  in this folder - the same source as github.com/EnvianMods/ModCommandX.
 echo  Needs Node.js 20 or newer and an internet connection. Takes 2-5 minutes.
 echo.
 where node >nul 2>nul || goto :noNode
@@ -23,11 +23,11 @@ if errorlevel 1 goto :npmFail
 echo  [3/3] Fetching bundled tools and building the exe...
 call npm run build-exe
 if errorlevel 1 goto :buildFail
-if not exist "release\ZeroCompanyModCommand.exe" goto :buildFail
-copy /y "release\ZeroCompanyModCommand.exe" "ZeroCompanyModCommand.exe" >nul
+if not exist "release\ModCommandX.exe" goto :buildFail
+copy /y "release\ModCommandX.exe" "ModCommandX.exe" >nul
 echo.
-echo  DONE. ZeroCompanyModCommand.exe is now in this folder - run it from here.
-echo  It keeps its data in %%APPDATA%%\ZeroCompanyModCommand, so updates never touch your mods.
+echo  DONE. ModCommandX.exe is now in this folder - run it from here.
+echo  It keeps its data in %%APPDATA%%\ModCommandX, so updates never touch your mods.
 echo.
 if defined ZC_BUILD_QUIET exit /b 0
 start "" explorer.exe "%~dp0"
@@ -52,7 +52,7 @@ exit /b 1
 
 :buildFail
 echo.
-echo  The build did not produce release\ZeroCompanyModCommand.exe. Scroll up for the error.
+echo  The build did not produce release\ModCommandX.exe. Scroll up for the error.
 echo  Running Build.bat again usually fixes an interrupted download.
 echo.
 pause

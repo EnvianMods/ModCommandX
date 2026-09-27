@@ -1274,7 +1274,7 @@ function renderSettings() {
     if (ue4ssUp.available) ue4ssTail += ` NEWER ${fromNexus ? 'NEXUS ' : ''}BUILD AVAILABLE: ${ue4ssUp.latestBuild} from ${fmtDate(ue4ssUp.latestDate)}.`;
     else if (ue4ssUp.latest) ue4ssTail += ' Up to date.';
   } else if (state.ue4ss.installed) {
-    ue4ssTail = ' Build unknown (not installed by Mod Command) — Download & install to get the Zero Company package from Nexus.';
+    ue4ssTail = ' Build unknown (not installed by Mod Command X) — Download & install to get the Zero Company package from Nexus.';
   } else {
     ue4ssTail = ' Download & install fetches “UE4SS for Star Wars Zero Company” from Nexus Mods — stock UE4SS plus this game’s signatures, loader settings and helpers.';
   }
@@ -1331,7 +1331,7 @@ function renderSettings() {
     up.classList.toggle('primary', !!ru.available);
   }
   $('#set-7z-path').textContent = state.settings.sevenZipPath
-    || (state.sevenZipBundled ? 'Bundled with Mod Command (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
+    || (state.sevenZipBundled ? 'Bundled with Mod Command X (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
   $('#chk-close-on-launch').checked = !!state.settings.closeOnLaunch;
   $('#chk-reduced-motion').checked = !!state.settings.reducedMotion;
   // Game update freeze
@@ -1463,7 +1463,7 @@ $('#btn-nxm-register').addEventListener('click', async () => {
   if (data) {
     state = data;
     render();
-    toast(registered ? 'nxm:// handler removed.' : 'nxm:// links now open in Mod Command.');
+    toast(registered ? 'nxm:// handler removed.' : 'nxm:// links now open in Mod Command X.');
   }
 });
 // UE4SS version picker: every GitHub release with a runtime zip, newest
@@ -1475,7 +1475,7 @@ async function openUe4ssVersionsModal() {
   if (!data) return;
   const cur = data.installed;
   $('#ue4ss-versions-sub').textContent =
-    (cur ? `Installed by Mod Command: ${cur.name}${cur.restored ? ' (restored)' : ''}. ` : (data.status.installed ? 'The installed copy was not placed by Mod Command, so its build is unknown. ' : 'UE4SS is not installed. ')) +
+    (cur ? `Installed by Mod Command X: ${cur.name}${cur.restored ? ' (restored)' : ''}. ` : (data.status.installed ? 'The installed copy was not placed by Mod Command X, so its build is unknown. ' : 'UE4SS is not installed. ')) +
     'Two sources: the game-specific package on Nexus (stock UE4SS plus this game’s signatures, loader settings and helpers — what Download & install fetches by default) and the stock upstream build on GitHub, which carries none of that and is only a fallback. Every install keeps the build it replaces, so you can go back to whichever matched a frozen game version. The stable 3.0.x zips use a flat layout this manager cannot deploy and predate UE 5.6.';
   const list = $('#ue4ss-versions-list');
   list.innerHTML = '';
@@ -3894,7 +3894,7 @@ let launcherUpdateUrl = null;
 function showLauncherBanner(info) {
   launcherUpdateUrl = info.url;
   $('#launcher-banner-text').textContent =
-    `Launcher update available — v${info.latest} (you have v${info.current})${info.notes ? `: ${info.notes}` : ''}`;
+    `Mod Command X update available — v${info.latest} (you have v${info.current})${info.notes ? `: ${info.notes}` : ''}`;
   $('#launcher-banner').classList.remove('hidden');
 }
 $('#launcher-banner-get').addEventListener('click', () => {
@@ -4016,7 +4016,7 @@ $('#btn-setup-nxm').addEventListener('click', async () => {
     state = data;
     render();
     refreshSetupModal();
-    toast('nxm:// links now open in Mod Command.');
+    toast('nxm:// links now open in Mod Command X.');
   }
 });
 
@@ -4043,7 +4043,7 @@ refreshState().then(() => {
 /* =======================================================================
    SDK LINK — the host half, and all of it.
 
-   Mod Command has no Forge panel. When an SDK is linked, lib/sdk-link.js
+   Mod Command X has no Forge panel. When an SDK is linked, lib/sdk-link.js
    parks a WebContentsView running the SDK'S OWN page over #content, and
    everything inside that view (doctor, templates, scaffolding, CHECK,
    BUILD, DEPLOY, the console) belongs to the SDK. This block only:
@@ -4117,7 +4117,7 @@ function sdkLinkRender() {
   $('#forge-fallback').classList.toggle('hidden', !s.linked);
   // ONE Get button on the pitch, ONE Get link on the card, both the published
   // url. Nothing published yet and nothing cached: no button, one dim line —
-  // "Point Mod Command at an installed SDK" stays, because that path needs no
+  // "Point Mod Command X at an installed SDK" stays, because that path needs no
   // network at all.
   const getUrl = (sdkLink.links.sdk && sdkLink.links.sdk.url) || null;
   const labels = getUrl ? sdkGetLabels(getUrl) : null;
@@ -4166,7 +4166,7 @@ function sdkLinkRender() {
 // from status().installed, falling back to the update answer's `installed`)
 // with its public name when the update answer knows it, then the workbench
 // manifest's own sdkUiVersion (display only — it is not the SDK's version and
-// can lag it), the contract and the Mod Command floor.
+// can lag it), the contract and the Mod Command X floor.
 //   current  -> "1.29.6 (public 1.0.3)"
 //   update   -> "1.29.6 (newest public 1.0.4)"
 function sdkVersionLabel(s, info) {
@@ -4187,7 +4187,7 @@ function sdkNoteRender() {
   const info = sdkLink.update || s.update || null;
   const cli = s.cliPath && s.cliPath !== s.sdkPath ? ` · CLI runs against ${s.cliPath}` : '';
   const noteEl = $('#set-sdk-note');
-  noteEl.textContent = `${m.name || 'Mod SDK'} ${sdkVersionLabel(s, info)} · workbench UI ${m.sdkUiVersion || 'dev'} · UI contract ${m.contract} · needs Mod Command ${m.minModCommand}+ (this is ${s.hostVersion})${cli}`;
+  noteEl.textContent = `${m.name || 'Mod SDK'} ${sdkVersionLabel(s, info)} · workbench UI ${m.sdkUiVersion || 'dev'} · UI contract ${m.contract} · needs Mod Command ${m.minModCommand}+ (Mod Command X is compatible with ${s.hostVersion})${cli}`;
   noteEl.className = 'setting-value dim';
 }
 

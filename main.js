@@ -6,7 +6,7 @@ const { spawn } = require('child_process');
 
 // ------------------------------------------------- runtime integrity check
 // The portable exe unpacks the whole Electron runtime into
-// %TEMP%\ZeroCompanyModCommand (see package.json build.portable.unpackDirName)
+// %TEMP%\ModCommandX (see package.json build.portable.unpackDirName)
 // and runs it from there. Antivirus products have been seen quarantining files
 // straight out of that folder — ffmpeg.dll most often — which leaves the app
 // dead at launch or silently broken. Check the runtime DLLs before anything
@@ -45,10 +45,10 @@ function checkRuntimeFiles() {
     '  1. Restore the listed file(s) from your antivirus quarantine, and',
     '  2. Add the folder above to your antivirus exclusions (it keeps the same',
     '     name every launch, so one exclusion is enough), then',
-    '  3. Run Zero Company Mod Command again.',
+    '  3. Run Mod Command X again.',
   ].join('\n');
   try {
-    dialog.showErrorBox('Zero Company Mod Command — runtime files missing', message);
+    dialog.showErrorBox('Mod Command X — runtime files missing', message);
   } catch {
     // showErrorBox can throw on a headless/broken session; exiting is still right
   }
@@ -78,24 +78,24 @@ const report = require('./lib/report');
 const sdkLink = require('./lib/sdk-link');
 
 // App data (settings, staging, indexes) lives in the OS per-user app-data
-// folder — %APPDATA%\ZeroCompanyModCommand on Windows — never beside the exe.
+// folder — %APPDATA%\ModCommandX on Windows — never beside the exe.
 // (The mod ARCHIVE is separate: it lives in the game folder, see below.)
 // Running from source keeps using ./data so a dev checkout stays self-contained.
-const APPDATA_DIR_NAME = 'ZeroCompanyModCommand';
+//
+// Mod Command X installs side by side with the upstream Zero Company Mod
+// Command and shares NOTHING with it: its own data folder here, its own
+// Electron userData (%APPDATA%\Mod Command X, from package.json productName —
+// so its own single-instance lock and its own persist:nexus cookies) and its
+// own game-side archive. It deliberately does NOT migrate the upstream app's
+// %APPDATA%\ZeroCompanyModCommand or its older ZeroCompanyModCommand-data
+// folder; a user who wants those mods imports them explicitly (Settings ->
+// Import from a mod manager folder), which copies and never moves.
+const APPDATA_DIR_NAME = 'ModCommandX';
 
 function resolveDataDir() {
   if (process.env.ZC_DATA_DIR) return process.env.ZC_DATA_DIR; // test harness override
   if (!app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR) return path.join(__dirname, 'data');
-  const dir = path.join(app.getPath('appData'), APPDATA_DIR_NAME);
-  // A pre-1.9.0 data folder (next to the portable exe, or under userData) is
-  // moved into place once — copied, verified, then renamed aside as a backup.
-  const { migrateLegacyDataDir } = require('./lib/storage');
-  const legacy = [
-    process.env.PORTABLE_EXECUTABLE_DIR && path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'ZeroCompanyModCommand-data'),
-    path.join(app.getPath('userData'), 'data'),
-  ].filter(Boolean);
-  for (const old of legacy) if (migrateLegacyDataDir(old, dir)) break;
-  return dir;
+  return path.join(app.getPath('appData'), APPDATA_DIR_NAME);
 }
 
 const store = new Store(resolveDataDir());
@@ -104,7 +104,7 @@ let win = null;
 
 // ---------------------------------------------------------- mod archive location
 // The archive (library/backups/versions + a mirrored manifest) lives in the
-// GAME folder by default — <game>\ModCommandArchive — so mods survive app
+// GAME folder by default — <game>\ModCommandXArchive — so mods survive app
 // updates and deletions, and a fresh install can restore everything from it.
 // settings.storageDir overrides with a custom location.
 
@@ -120,36 +120,9 @@ function resolveStorageRoot() {
 function ensureStorage() {
   const desired = resolveStorageRoot();
   if (path.resolve(desired) === path.resolve(store.storageRoot)) return null;
-  // A pre-1.9.0 archive under the old folder name sits beside where the new
-  // one belongs: rename it in place (same volume, atomic, keeps everything
-  // including the mirrored manifest) rather than copying it entry by entry.
-  if (store.settings.gamePath && !store.settings.storageDir) {
-    const legacy = path.join(store.settings.gamePath, storageLib.LEGACY_ARCHIVE_DIR_NAME);
-    if (fs.existsSync(legacy)) {
-      // Files in the legacy folder other than its mirrored manifest.
-      const legacyContent = () => storageLib.countFilesRec(legacy) - (fs.existsSync(path.join(legacy, 'manager-data.json')) ? 1 : 0);
-      if (!fs.existsSync(desired)) {
-        try {
-          fs.renameSync(legacy, desired);
-          log('info', `mod archive renamed ${storageLib.LEGACY_ARCHIVE_DIR_NAME} -> ${storageLib.ARCHIVE_DIR_NAME}`);
-        } catch (err) {
-          log('warn', `could not rename the legacy archive folder (${err.message}); migrating entries instead`);
-          fs.mkdirSync(desired, { recursive: true });
-          storageLib.migrateStorage(legacy, desired);
-        }
-      } else if (legacyContent() === 0) {
-        // An older build ran after the rename and re-created an empty legacy
-        // folder (plus, at most, a stale mirror): drop it so nothing lingers.
-        try { fs.rmSync(legacy, { recursive: true, force: true }); log('info', `removed empty legacy archive folder ${storageLib.LEGACY_ARCHIVE_DIR_NAME}`); } catch (_) {}
-      } else {
-        // Both populated: merge the legacy entries in (never clobbering an
-        // entry that already exists under the new name), then drop the shell.
-        const res = storageLib.migrateStorage(legacy, desired);
-        log('info', `merged ${res.moved} entr(y/ies) from a re-created ${storageLib.LEGACY_ARCHIVE_DIR_NAME} into ${storageLib.ARCHIVE_DIR_NAME}`);
-        try { if (legacyContent() === 0) fs.rmSync(legacy, { recursive: true, force: true }); } catch (_) {}
-      }
-    }
-  }
+  // Only X's OWN archive is ever touched here. The upstream Mod Command's
+  // <game>\ModCommandArchive (and its pre-1.9.0 ZeroCompanyModArchive) belong
+  // to that app: X never renames, merges, prunes or deletes them.
   fs.mkdirSync(desired, { recursive: true });
   const res = storageLib.migrateStorage(store.storageRoot, desired);
   store.setStorageRoot(desired);
@@ -158,8 +131,11 @@ function ensureStorage() {
   return { root: desired, moved: res.moved };
 }
 
-// Fresh install + an archive already sitting in the game folder (or the custom
-// location): restore every mod, profile, and vault entry from it.
+// Fresh install + X's OWN archive already sitting in the game folder (or the
+// custom location): restore every mod, profile, and vault entry from it.
+// store.storageRoot is <game>\ModCommandXArchive (or storageDir), never the
+// upstream app's ModCommandArchive — X must not auto-import (and, with
+// pruneImported, empty) another app's archive.
 async function autoRestoreFromArchive() {
   if (store.mods.length) return null;
   const manifest = path.join(store.storageRoot, 'manager-data.json');
@@ -632,7 +608,7 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: '#05080f',
     autoHideMenuBar: true,
-    title: 'Zero Company Mod Command',
+    title: 'Mod Command X',
     icon: path.join(__dirname, 'src', 'assets', 'app-icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -653,12 +629,17 @@ function createWindow() {
   sdkLink.configure({
     window: win,
     appDir: __dirname,
-    // package.json, not app.getVersion(): the manifest's minModCommand is
-    // checked against MOD COMMAND's version, and app.getVersion() reports
-    // Electron's own when the app is started from a script rather than a
-    // folder (which is exactly what the verification harness does).
+    // The SDK manifest's minModCommand speaks the UPSTREAM Mod Command's
+    // version line (1.9.x). X restarted its own numbering at 1.0.0 but carries
+    // the upstream feature set it forked from, recorded in package.json as
+    // modCommandCompat — so that, not X's own version, is what an SDK is
+    // checked against. (package.json, not app.getVersion(): the latter reports
+    // Electron's own when the app is started from a script.)
     hostVersion: (() => {
-      try { return require('./package.json').version; } catch (_) { return app.getVersion(); }
+      try {
+        const pkg = require('./package.json');
+        return pkg.modCommandCompat || pkg.version;
+      } catch (_) { return app.getVersion(); }
     })(),
     log,
     getGamePath: () => store.settings.gamePath || null,
@@ -865,10 +846,10 @@ app.whenReady().then(() => {
   setInterval(() => { if (win && !win.isDestroyed()) maybeCheckSdkUpdate(); }, UPDATE_CHECK_MS);
 });
 
-// WHERE TO GET THE SDK. Mod Command hard-codes no destination: the operator
-// publishes one in the asset repo's launcher-version.json `sdk` block, which
-// is the same file that announces Mod Command's own updates, so BOTH downloads
-// flip from GitHub to Nexus at launch by editing one published file.
+// WHERE TO GET THE SDK. Mod Command X hard-codes no destination: the upstream
+// operator publishes one in the shared asset repo's launcher-version.json
+// `sdk` block. X reads ONLY that block from it — X's own updates come from its
+// own GitHub releases (lib/launcher-update.js), never from that file.
 //
 // Two sources, in order, and the answer says which it used:
 //   'asset-file' — the check that ran this session carried a block
@@ -1294,7 +1275,7 @@ function detectManagerSources() {
   // The app-side data folder, when the archive has moved to the game folder.
   if (path.resolve(store.dataDir) !== path.resolve(store.storageRoot)
     && fs.existsSync(path.join(store.dataDir, 'library'))) {
-    consider(store.dataDir, 'Previous Mod Command data (app folder)');
+    consider(store.dataDir, 'Previous Mod Command X data (app folder)');
   }
   const la = process.env.LOCALAPPDATA;
   if (la) {
@@ -1552,12 +1533,12 @@ const handlers = {
       fs.mkdirSync(appsDir, { recursive: true });
       const target = process.env.APPIMAGE || exe;
       const desktop = [
-        '[Desktop Entry]', 'Type=Application', 'Name=Zero Company Mod Command',
+        '[Desktop Entry]', 'Type=Application', 'Name=Mod Command X',
         `Exec="${target}" %u`, 'Terminal=false', 'NoDisplay=true',
         'MimeType=x-scheme-handler/nxm;', '',
       ].join('\n');
-      fs.writeFileSync(path.join(appsDir, 'zero-company-mod-command.desktop'), desktop);
-      try { execFileSync('xdg-mime', ['default', 'zero-company-mod-command.desktop', 'x-scheme-handler/nxm'], { stdio: 'ignore' }); } catch (_) {}
+      fs.writeFileSync(path.join(appsDir, 'mod-command-x.desktop'), desktop);
+      try { execFileSync('xdg-mime', ['default', 'mod-command-x.desktop', 'x-scheme-handler/nxm'], { stdio: 'ignore' }); } catch (_) {}
       try { execFileSync('update-desktop-database', [appsDir], { stdio: 'ignore' }); } catch (_) {}
       app.setAsDefaultProtocolClient('nxm');
       return fullState();
@@ -1572,12 +1553,12 @@ const handlers = {
         ['add', key, ...(value ? ['/v', value] : ['/ve']), '/d', data, '/f'], { stdio: 'ignore' });
       // Browser "Open …?" dialogs pull the name from these (which one varies by
       // browser/version) or from the exe's FileDescription.
-      set('HKCU\\Software\\Classes\\nxm', null, 'URL:Mod Command Link');
-      set('HKCU\\Software\\Classes\\nxm', 'FriendlyTypeName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\shell\\open', 'FriendlyAppName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\shell\\open\\command', 'FriendlyAppName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationName', 'in Mod Command');
-      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationDescription', 'Zero Company Mod Command');
+      set('HKCU\\Software\\Classes\\nxm', null, 'URL:Mod Command X Link');
+      set('HKCU\\Software\\Classes\\nxm', 'FriendlyTypeName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\shell\\open', 'FriendlyAppName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\shell\\open\\command', 'FriendlyAppName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationName', 'in Mod Command X');
+      set('HKCU\\Software\\Classes\\nxm\\Application', 'ApplicationDescription', 'Mod Command X');
     } catch (_) { /* cosmetic only */ }
     return fullState();
   },
@@ -2259,7 +2240,7 @@ const handlers = {
       // the disk, but the user is told exactly what they are getting.
       sendEvent({
         type: 'toast', kind: 'warn',
-        message: 'The Nexus page for “UE4SS for Star Wars Zero Company” could not be read, so Mod Command is installing the stock upstream build from GitHub instead — it has no Zero Company signatures and may not work after a game patch.',
+        message: 'The Nexus page for “UE4SS for Star Wars Zero Company” could not be read, so Mod Command X is installing the stock upstream build from GitHub instead — it has no Zero Company signatures and may not work after a game patch.',
       });
     }
     const asset = tag ? await ue4ssDl.runtimeByTag(tag) : await ue4ssDl.latestRuntime();
@@ -2418,7 +2399,7 @@ async function installUe4ssFromNexus(fileId) {
   if (!nexusUser.isPremium) {
     return {
       opened: 'embed', url: ue4ssDl.NEXUS_URL, name: 'UE4SS for Star Wars Zero Company',
-      hint: 'Press Mod Manager Download on the file list and Mod Command installs it.',
+      hint: 'Press Mod Manager Download on the file list and Mod Command X installs it.',
     };
   }
   const files = await nexus.filesList(ue4ssDl.NEXUS_MOD_ID, token);
@@ -2602,7 +2583,7 @@ function diagnostics() {
         } else {
           add(unmanaged.length ? 'info' : 'good', 'Mods folder (plugins)',
             `Present with ${folders.length} plugin folder${folders.length === 1 ? '' : 's'}: ` +
-            `${managed.length} managed by Mod Command, ${unmanaged.length} unmanaged` +
+            `${managed.length} managed by Mod Command X, ${unmanaged.length} unmanaged` +
             (unmanaged.length ? ` (${unmanaged.join(', ')}) — Hangar Bay → Import can adopt them so enable/disable, updates and removal are handled here.` : '.'));
         }
       }
@@ -2656,7 +2637,7 @@ function diagnostics() {
       else if (u.latest) tail += ' Current.';
       if (!fromNexus) tail += ' The Zero Company package on Nexus is the tested one — Settings → UE4SS.';
     } else if (ue4ss.installed) {
-      tail = ' Build unknown (not installed by Mod Command) — reinstall from Settings → UE4SS to get the Zero Company package from Nexus.';
+      tail = ' Build unknown (not installed by Mod Command X) — reinstall from Settings → UE4SS to get the Zero Company package from Nexus.';
     }
     add(u.available ? 'warning' : (ue4ss.healthy ? 'good' : (ue4ss.installed ? 'warning' : 'info')), 'UE4SS runtime', ue4ss.message + tail);
   }
@@ -2675,7 +2656,7 @@ function diagnostics() {
   {
     const sz = findSevenZip(store.settings.sevenZipPath);
     add(sz ? 'good' : 'info', '7-Zip',
-      sz ? `Available for .7z/.rar archives (${sz === bundledSevenZip() ? 'bundled with Mod Command' : sz})` : 'Not found — only .zip archives can be installed.');
+      sz ? `Available for .7z/.rar archives (${sz === bundledSevenZip() ? 'bundled with Mod Command X' : sz})` : 'Not found — only .zip archives can be installed.');
   }
   const missing = store.settings.gamePath ? engine.auditDeployedFiles() : [];
   if (missing.length) {
@@ -2760,7 +2741,7 @@ handlers['support-report'] = async () => ({ text: buildSupportReport() });
 handlers['save-support-report'] = async () => {
   const res = await dialog.showSaveDialog(win, {
     title: 'Save support report',
-    defaultPath: `ZeroCompanyModCommand-report-${new Date().toISOString().slice(0, 10)}.txt`,
+    defaultPath: `ModCommandX-report-${new Date().toISOString().slice(0, 10)}.txt`,
     filters: [{ name: 'Text report', extensions: ['txt'] }],
   });
   if (res.canceled || !res.filePath) return { saved: false };

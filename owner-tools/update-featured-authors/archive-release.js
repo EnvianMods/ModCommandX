@@ -11,11 +11,11 @@
 //
 // Options:
 //   --repo Owner/Name       target archive repo
-//                           (default: EnvianMods/ZeroCompanyModCommandArchive)
+//                           (default: EnvianMods/ModCommandXArchive)
 //   --title "Project Name"  project name for the repo README (default: from repo name)
 //   --notes "..."           release notes
 //   --changelog <path>      CHANGELOG.md to sync into the repo (default: auto-detect
-//                           for Zero Company Mod Command; skipped when not found)
+//                           for Mod Command X; skipped when not found)
 //
 // Examples:
 //   node archive-release.js 1.1.0 build.zip source.zip --notes "..."
@@ -27,11 +27,19 @@
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULT_REPO = 'EnvianMods/ZeroCompanyModCommandArchive';
+const DEFAULT_REPO = 'EnvianMods/ModCommandXArchive';
+// X's own checkout only — never the upstream app's folder.
 const DEFAULT_CHANGELOG_HOMES = [
   path.join(__dirname, '..', '..'),
-  'G:\\SteamLibrary\\steamapps\\common\\Star Wars Zero Company\\ZeroCompanyModManager',
 ];
+// The upstream project's publishing targets. Mod Command X must never write to them.
+const UPSTREAM_TARGETS = /^EnvianMods\/(ZeroCompanyModCommand(Archive)?|SWZeroCompanyFeaturedAuthors)$/i;
+function refuseUpstream(repo) {
+  if (UPSTREAM_TARGETS.test(repo)) {
+    console.error(`Refusing: ${repo} belongs to the upstream Zero Company Mod Command. Mod Command X writes only to its own repos.`);
+    process.exit(1);
+  }
+}
 
 function getToken() {
   for (const f of ['archive-token.txt', 'token.txt']) {
@@ -61,6 +69,7 @@ function parseArgs(argv) {
   const { version, files, flags } = parseArgs(process.argv.slice(2));
   const repo = flags.repo || DEFAULT_REPO;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { console.error('Bad --repo (expected Owner/Name):', repo); process.exit(1); }
+  refuseUpstream(repo);
   const API = `https://api.github.com/repos/${repo}`;
   const projectTitle = flags.title
     || (repo.endsWith('Archive') ? repo.split('/')[1].replace(/Archive$/, '') : repo.split('/')[1])

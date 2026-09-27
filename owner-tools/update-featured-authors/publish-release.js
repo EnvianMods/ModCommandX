@@ -1,21 +1,21 @@
 'use strict';
-// OWNER TOOL — mirrors a launcher release to GitHub:
-//   1. creates a GitHub Release (tag vX.Y.Z) on the launcher repo
+// OWNER TOOL — publishes a Mod Command X release to GitHub:
+//   1. creates a GitHub Release (tag vX.Y.Z) on github.com/EnvianMods/ModCommandX
 //   2. uploads the shipping zip as a release asset
 //
-// RELEASE POLICY (2026-09-01, until otherwise stated): GitHub releases are a
-// silent mirror/backup only. The update announcement that installed launchers
-// see must point at NEXUS MODS (downloads there drive mod-page popularity and
-// Donation Points). This tool therefore does NOT announce by default — it
-// prints the Nexus announcement command to run next. Pass --announce-github
-// only if the distribution strategy changes.
+// X is a private build distributed ONLY through those GitHub releases (never
+// on Nexus Mods). Publishing the release IS the announcement: installed copies
+// of X read /releases/latest of that repo (lib/launcher-update.js) and show
+// their update banner from it. X never publishes to the upstream Zero Company
+// Mod Command's repos, its Nexus page or the shared featured-authors files —
+// the guard below refuses those targets even when passed with --repo.
 //
 // Usage (run after building and zipping):
 //   node publish-release.js [--repo Owner/Name] <version> <path-to-zip> [--notes "..."]
 //   node publish-release.js [--repo Owner/Name] --show
 //   node publish-release.js --check-only <path-to-zip>   (guard only, no GitHub)
 //
-// --repo targets any project's source repo (default: the launcher's).
+// --repo targets another of the owner's repos (default: EnvianMods/ModCommandX).
 // Auth: release-token.txt (preferred) or token.txt next to this script, or
 // GITHUB_TOKEN — needs Contents read/write on the target repo.
 //
@@ -27,13 +27,19 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const DEFAULT_REPO = 'EnvianMods/ZeroCompanyModCommand';
-// --repo Owner/Name targets any project's source repo; default is the launcher.
+const DEFAULT_REPO = 'EnvianMods/ModCommandX';
+// --repo Owner/Name targets another repo; default is X's own.
 const repoArg = (() => {
   const i = process.argv.indexOf('--repo');
   return i !== -1 ? process.argv[i + 1] : null;
 })();
 const REPO_FULL = repoArg || DEFAULT_REPO;
+// The upstream project's publishing targets. X must never write to them.
+const UPSTREAM_TARGETS = /^EnvianMods\/(ZeroCompanyModCommand(Archive)?|SWZeroCompanyFeaturedAuthors)$/i;
+if (UPSTREAM_TARGETS.test(REPO_FULL)) {
+  console.error(`Refusing: ${REPO_FULL} belongs to the upstream Zero Company Mod Command. Mod Command X publishes only to its own repos.`);
+  process.exit(1);
+}
 const API = `https://api.github.com/repos/${REPO_FULL}`;
 
 function getToken() {
@@ -55,7 +61,6 @@ const FORBIDDEN_IN_ASSETS = /HANDOFF/i;
 function find7z() {
   const candidates = [
     path.join(__dirname, '..', '..', 'tools', '7-Zip', '7z.exe'),
-    'G:\\SteamLibrary\\steamapps\\common\\Star Wars Zero Company\\ZeroCompanyModManager\\tools\\7-Zip\\7z.exe',
   ];
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
@@ -123,7 +128,7 @@ async function main() {
   }
 
   if (!getToken()) {
-    console.error('No GitHub token found (release-token.txt / token.txt / GITHUB_TOKEN). It needs Contents read/write on', REPO_FULL, 'and the roster repo.');
+    console.error('No GitHub token found (release-token.txt / token.txt / GITHUB_TOKEN). It needs Contents read/write on', REPO_FULL + '.');
     process.exit(1);
   }
   if (!/^[\w.-]+\/[\w.-]+$/.test(REPO_FULL)) { console.error('Bad --repo (expected Owner/Name):', REPO_FULL); process.exit(1); }
@@ -170,7 +175,7 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({
         tag_name: `v${version}`,
-        name: `${REPO_FULL === DEFAULT_REPO ? 'Zero Company Mod Command' : REPO_FULL.split('/')[1].replace(/([a-z])([A-Z])/g, '$1 $2')} v${version}`,
+        name: `${REPO_FULL === DEFAULT_REPO ? 'Mod Command X' : REPO_FULL.split('/')[1].replace(/([a-z])([A-Z])/g, '$1 $2')} v${version}`,
         body: notes || `Release v${version}. See CHANGELOG.md for details.`,
       }),
     });
@@ -200,21 +205,9 @@ async function main() {
     console.error(`Asset upload failed (${uploadRes.status}):`, (await uploadRes.text()).slice(0, 400));
     process.exit(1);
   }
-  console.log('GitHub release mirrored (no announcement):', release.html_url);
-
-  if (args.includes('--announce-github')) {
-    // Only for a deliberate strategy change — normally announce Nexus instead.
-    const announce = spawnSync(process.execPath, [
-      path.join(__dirname, 'update-launcher-version.js'),
-      version, release.html_url,
-      ...(notes ? ['--notes', notes] : []),
-    ], { stdio: 'inherit' });
-    process.exit(announce.status || 0);
-  }
-
+  console.log('GitHub release published:', release.html_url);
   if (REPO_FULL === DEFAULT_REPO) {
-    console.log('\nPOLICY: announce the NEXUS page so update downloads count there. Next step:');
-    console.log(`  node update-launcher-version.js ${version} "https://www.nexusmods.com/starwarszerocompany/mods/<your-mod-id>?tab=files"${notes ? ` --notes "${notes}"` : ''}`);
+    console.log('Installed copies of Mod Command X will offer it on their next hourly update check.');
   }
 }
 

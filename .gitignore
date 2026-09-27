@@ -2,7 +2,7 @@
 node_modules/
 release/
 
-# Local user data (settings, Nexus sign-in tokens, installed mod library)
+# Local user data (settings, Nexus API key, installed mod library)
 data/
 
 # Secrets — never commit credentials of any kind
@@ -13,7 +13,7 @@ token.txt
 # Backups and temp
 *.zcbak
 *.log
-/ZeroCompanyModCommand.exe
+/ModCommandX.exe
 
 # Internal working notes - lives in the archive repo at docs/HANDOFF.md, never published
 HANDOFF.md
