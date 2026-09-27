@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '22'
       - run: npm ci
       # --publish never: on tag builds electron-builder otherwise tries to
       # publish to GitHub itself and fails without a token; the attach step
@@ -32,9 +32,9 @@ jobs:
           if-no-files-found: error
       # On a version tag, attach the AppImage to that tag's GitHub release.
       # CI usually finishes before the local release flow creates the release,
-      # so create it when missing — publish-release.js reuses an existing
+      # so create it when missing — the local release flow reuses an existing
       # release and adds the Windows zip + notes afterwards (it replaces this
-      # placeholder title and body). If publish-release.js creates the release
+      # placeholder title and body). If the local flow creates the release
       # between the failed upload and the create, the last upload retries.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')

@@ -81,8 +81,7 @@ const { checkLauncherUpdate, cachedInfo: cachedLauncherInfo } = require('./lib/l
 const { log, logText } = require('./lib/log');
 const report = require('./lib/report');
 // SDK LINK: Mod Command hosts the Zero Company Mod SDK's OWN UI when one is
-// installed. It carries no copy of that UI — see lib/sdk-link.js and
-// docs/SDK_LINK.md.
+// installed. It carries no copy of that UI — see lib/sdk-link.js.
 const sdkLink = require('./lib/sdk-link');
 const { configureBrowserIdentity, configureNexusSession, learnClientHints } = require('./lib/nexus-browser');
 const { configureWebPermissions, lockWebContentsDevices } = require('./lib/web-permissions');
