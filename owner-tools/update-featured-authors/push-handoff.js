@@ -18,7 +18,9 @@
 //                       (default: EnvianMods/ModCommandXArchive)
 //   --branch <name>     target branch (default: main)
 //   --path <repo path>  target path in the repo (default: docs/HANDOFF.md)
-//   --file <path>       local file to push (default: HANDOFF.md at the repo root)
+//   --file <path>       local file to push (default: "Mod Command X - HANDOFF.md"
+//                       in G:\Envian Mods and Projects\Project Handoffs, else
+//                       HANDOFF.md at the repo root)
 //   --message "..."     commit message (default: "HANDOFF <YYYY-MM-DD HH:mm>")
 //   --show              show the archived copy's size/sha and whether it matches
 //
@@ -33,9 +35,12 @@ const crypto = require('crypto');
 const DEFAULT_REPO = 'EnvianMods/ModCommandXArchive';
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_REPO_PATH = 'docs/HANDOFF.md';
-// X's own checkout only — never the upstream app's folder.
-const DEFAULT_HANDOFF_HOMES = [
-  path.join(__dirname, '..', '..'),
+// Where the handoff lives, first match wins: the central Project Handoffs
+// folder (where all handoffs are kept now), then X's own checkout. Never the
+// upstream app's folder or its handoff.
+const DEFAULT_HANDOFF_FILES = [
+  path.join('G:\\Envian Mods and Projects\\Project Handoffs', 'Mod Command X - HANDOFF.md'),
+  path.join(__dirname, '..', '..', 'HANDOFF.md'),
 ];
 // The upstream project's publishing targets. Mod Command X must never write to them.
 const UPSTREAM_TARGETS = /^EnvianMods\/(ZeroCompanyModCommand(Archive)?|SWZeroCompanyFeaturedAuthors)$/i;
@@ -94,8 +99,7 @@ function parseArgs(argv) {
 
 function findHandoff(flags) {
   if (flags.file) return path.resolve(flags.file);
-  for (const home of DEFAULT_HANDOFF_HOMES) {
-    const p = path.join(home, 'HANDOFF.md');
+  for (const p of DEFAULT_HANDOFF_FILES) {
     if (fs.existsSync(p)) return p;
   }
   return null;
@@ -126,7 +130,7 @@ function findHandoff(flags) {
 
   const localPath = findHandoff(flags);
   if (!localPath || !fs.existsSync(localPath)) {
-    console.error('Local HANDOFF.md not found. Looked in:', DEFAULT_HANDOFF_HOMES.join(', '), '— pass --file <path>.');
+    console.error('Local handoff not found. Looked for:', DEFAULT_HANDOFF_FILES.join(', '), '— pass --file <path>.');
     process.exit(1);
   }
   const content = fs.readFileSync(localPath); // raw bytes: keeps CRLF exactly as on disk
