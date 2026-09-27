@@ -30,7 +30,9 @@ fs.mkdirSync(root);
 
 // Folders and files that never ship: dev state, secrets, build output, and
 // every binary (fetched by Build.bat instead).
-const XD = ['node_modules', 'release', 'data', '.git', 'zcbak', 'owner-tools', 'docs', '7-Zip'];
+// (bin / obj: the uninstaller's local build output — the package carries its
+// source, build/uninstaller/Uninstaller.cs, which the build compiles.)
+const XD = ['node_modules', 'release', 'data', '.git', 'zcbak', 'owner-tools', 'docs', '7-Zip', 'bin', 'obj'];
 // No script-type files either (kept from the upstream package, whose file host
 // quarantined a trivial .bat): Build.bat ships as Build.bat.txt.
 const XF = ['*token*.txt', 'nexus-key.txt', '*.exe', '*.dll', '*.bat', '*.cmd', '*.ps1', '*.py', '*.vbs', 'ZCSDKRuntime.zip', 'zcsdk-runtime.json', 'BUNDLED.txt', 'HANDOFF.md', 'DESCRIPTION.txt', '*.log', 'Thumbs.db', '.DS_Store'];
@@ -53,10 +55,13 @@ fs.writeFileSync(path.join(root, 'README-BUILD.txt'), [
   '   Explorer, type   cmd   and press Enter.',
   '4. Type   npm run build   and press Enter. It installs the build dependencies',
   '   (about 150 MB, once), fetches the bundled tools from their official sources',
-  '   (7-Zip, retoc, the ZCSDK Runtime) and builds release\\ModCommandX.exe.',
+  '   (7-Zip, retoc, the ZCSDK Runtime) and builds release\\ModCommandX.exe plus',
+  '   release\\Uninstall Mod Command X.exe (compiled with the C# compiler that is',
+  '   part of Windows\' .NET Framework 4.x - nothing extra to install).',
   '5. Run release\\ModCommandX.exe (move it anywhere you like). Your mods and',
   '   settings live in %APPDATA%\\ModCommandX, so rebuilding or updating never',
-  '   touches them.',
+  '   touches them. Keep "Uninstall Mod Command X.exe" next to it (Settings ->',
+  '   Uninstall Mod Command X... also has it).',
   '',
   'PREFER DOUBLE-CLICK? The one-click script ships as Build.bat.txt: rename it to',
   'Build.bat (File Explorer > View > "File name extensions" makes the .txt visible)',
@@ -84,6 +89,11 @@ execFileSync(sevenZip, ['a', '-tzip', '-mx=5', '-r', out, path.join(stage, '*')]
 const listing = execFileSync(sevenZip, ['l', '-ba', out], { encoding: 'utf8' });
 const bad = listing.split(/\r?\n/).filter((l) => /\.(exe|dll|zip|7z|rar|msi|sys|scr|com)\s*$/i.test(l.trim()));
 if (bad.length) { console.error('Binaries or nested archives found in the package:\n' + bad.join('\n')); process.exit(1); }
+// ...but it must carry the uninstaller's source, or the build cannot produce
+// "Uninstall Mod Command X.exe" next to ModCommandX.exe.
+const needed = ['build\\uninstaller\\Uninstaller.cs', 'build\\uninstaller\\app.manifest', 'build\\uninstaller\\uninstall-linux.sh', 'build\\build-uninstaller.js'];
+const missingSrc = needed.filter((rel) => !listing.split(/\r?\n/).some((l) => l.replace(/\//g, '\\').trim().endsWith(rel)));
+if (missingSrc.length) { console.error('The uninstaller source is missing from the package:\n' + missingSrc.join('\n')); process.exit(1); }
 const files = listing.split(/\r?\n/).filter((l) => l.trim() && !/\sD[.A-Z]{4}\s/.test(l)).length;
 fs.rmSync(stage, { recursive: true, force: true });
 console.log(`${path.basename(out)} — v${version}, ${files} files, ${(fs.statSync(out).size / 1048576).toFixed(1)} MB, no binaries.`);

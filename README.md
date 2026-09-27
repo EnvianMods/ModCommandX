@@ -463,6 +463,7 @@ lib/archive.js     zip (bsdtar / extract-zip) + 7z/rar (7-Zip CLI — tools/7-Zi
 src/               UI (index.html / styles.css / app.js) — Mod Command X + Mod Command themes
 src/theme-boot.js  sets <html data-theme> from the saved theme before first paint
 src/nexus-autoclick.js  free-account one-click: every Nexus download-page selector + the in-page auto-click
+build/uninstaller/ "Uninstall Mod Command X.exe" (Uninstaller.cs, compiled by build/build-uninstaller.js) + uninstall-linux.sh
 data/              settings when running from source (shipped builds use %APPDATA%\ModCommandX)
 ```
 
@@ -488,13 +489,72 @@ one; an older version is vaulted as an alternate without touching the install;
 the same version is a reinstall. The ⧗ versions button then offers every
 archived version for rollback or testing.
 
+## Uninstalling
+
+Run **`Uninstall Mod Command X.exe`** (shipped next to `ModCommandX.exe`), or use
+**Settings → Uninstall Mod Command X…** at the bottom of Settings, which starts it and
+closes the app. Nothing happens until you confirm: the window lists every item it will
+remove and keep, with sizes, and it refuses to run while Mod Command X is open (it
+offers to close it).
+
+| Removed | Kept |
+|---|---|
+| `%APPDATA%\ModCommandX` — settings (`manager-data.json`, incl. the encrypted API key), download staging, `nexus-file-index.json`, `tools\retoc.exe` | every mod installed in the game: `~mods`, `LogicMods`, `SWZeroCompany\Mods`, `ue4ss\Mods`, UE4SS itself, the game's own files |
+| `%APPDATA%\Mod Command X` — the Electron profile: the Nexus panel's cookies (`Partitions\nexus`), caches | UE4SS `mods.txt` incl. the start-order block (its lines keep your UE4SS mods switched on; the marker is shared with Mod Command) |
+| `%TEMP%\ModCommandX` — the portable exe's unpack folder | `*.zcbak` original-config backups (shared naming with Mod Command) and `%TEMP%\zc-retoc` |
+| `ModCommandX.exe`, the release `README.txt` / `CHANGELOG.md` (only if they are X's), and the uninstaller itself (deleted right after it closes) | **your stored mod library** (unless you tick the box, below) |
+| `HKCU\Software\Classes\nxm` — **only** if its `shell\open\command` points at `ModCommandX.exe` (or a dev run of an X checkout). If it points at the main Mod Command or another manager it is left alone and the list says so | everything of the upstream Zero Company Mod Command: `%APPDATA%\ZeroCompanyModCommand`, its profile, its archive |
+| the **Steam update freeze**, if X set it: the appmanifest is made writable and `AutoUpdateBehavior` set to `0`, exactly like Settings → freeze off (left on when the main Mod Command also froze the game) | |
+| `data\` of a source checkout (dev runs), when the uninstaller runs from one | the source files of that checkout |
+
+**The mod library.** *"Also delete my stored mod library (mods you switched off live
+only here and would be lost)"* is **unchecked** by default: the library (`library`,
+`backups`, `versions` and the mod list) stays, and reinstalling Mod Command X restores
+everything from it — the window says where it is. Ticked, the warning counts the
+switched-off mods that would be lost (read from X's `manager-data.json`) and the
+switched-on game-file mods whose original game files are backed up there. When the
+archive is **shared with Mod Command** (`<game>\ModCommandArchive`), only entries X
+alone uses are ever deleted: anything the main app's `manager-data.json` (or the
+archive's own manifest) lists is kept, as are the archive folder, its
+`manager-data.json` and `versions\ue4ss-runtime`. A leftover `<game>\ModCommandXArchive`
+is removed when empty or when the box is ticked. The archive folder name is read
+from `lib/storage.js` (`ARCHIVE_DIR_NAME`) at build time.
+
+**Safety.** Deletes happen only inside an allow-list of X-owned roots; every path is
+resolved and checked (never a drive root, the game folder, `%APPDATA%`, `%TEMP%`, the
+user profile, or anything of the upstream app), junctions and symlinks are removed as
+links and never followed, and a game path from the settings that does not contain
+`SWZeroCompany\Binaries\Win64\SWZeroCompany.exe` skips every game-side step. Files in
+use are retried, then left in place and listed. A short log (paths only, the user
+profile shortened to `%USERPROFILE%`, no keys) goes to `%TEMP%\ModCommandX-uninstall.log`.
+
+**Why a separate small exe.** `build/uninstaller/Uninstaller.cs` is a WinForms program
+compiled by `build/build-uninstaller.js` with the C# compiler that ships inside the
+.NET Framework 4.x of every Windows 10/11 (`csc.exe`) — ~140 KB, no extra runtime, no
+admin rights, and not part of the Electron app it has to delete (a second Electron
+would be ~100 MB, and the app cannot delete `%TEMP%\ModCommandX` while running from
+it). electron-builder's `beforePack` hook compiles it, `extraResources` embeds a copy
+(Settings runs that one from `%TEMP%\ModCommandX-uninstaller` when only the exe was
+kept) and `afterAllArtifactBuild` puts it next to `ModCommandX.exe`.
+`npm run build-uninstaller` builds it alone. Linux (AppImage) gets
+`build/uninstaller/uninstall-linux.sh` — same rules, removes
+`~/.local/share/applications/mod-command-x.desktop` and its xdg default only when
+they are X's, and never touches a shared archive.
+
+For testing every path can be redirected: `--appdata`, `--localappdata`, `--temp`,
+`--game`, `--steam-root`, `--reg-classes` (e.g. `Software\ModCommandXTest\Classes`,
+always under HKCU), `--install-dir`, `--dev-dir`, `--process-names`; `--dry-run`,
+`--yes`, `--delete-library`, `--close-running`, `--report <json>`, `--no-self-delete`,
+`--screenshot <png>`.
+
 ## Releases
 
 ```
 npm run dist
 ```
 
-produces `release/ModCommandX.exe` — a single portable executable. When run, it keeps
+produces `release/ModCommandX.exe` — a single portable executable — and, next to it,
+`release/Uninstall Mod Command X.exe` (see [Uninstalling](#uninstalling)). When run, the app keeps
 its settings in `%APPDATA%\ModCommandX` and the mod archive in the game folder under
 `ModCommandXArchive` — nothing is written beside the exe (the dev `data/` folder is
 separate). Nothing from the upstream app is migrated.
@@ -512,8 +572,8 @@ Shipping structure:
   upstream feature level, 1.9.14, which SDK manifests' `minModCommand` is checked
   against); per-version notes in `CHANGELOG.md`
 - the release asset is `ModCommandX-v<version>.zip`, containing `ModCommandX.exe` +
-  `README.txt` + `CHANGELOG.md` (the exe filename stays constant across versions so
-  nxm:// registrations survive updates)
+  `Uninstall Mod Command X.exe` + `README.txt` + `CHANGELOG.md` (the exe filename stays
+  constant across versions so nxm:// registrations survive updates)
 
 ## Releasing
 
@@ -522,11 +582,13 @@ Mod Command X is published **only** as GitHub releases of
 upstream project's repos or files. The local repo has no remote by default.
 
 1. Bump `version` in package.json and `RELEASE_VERSION.txt`, add a CHANGELOG entry, commit.
-2. `npm run dist`, zip exe + README.txt + CHANGELOG.md as `ModCommandX-v<version>.zip`;
+2. `npm run dist`, zip `ModCommandX.exe` + `Uninstall Mod Command X.exe` (both in `release/`)
+   + `build/README.txt` + CHANGELOG.md as `ModCommandX-v<version>.zip`;
    optionally `node owner-tools/update-featured-authors/package-source-release.js` for a
    binary-free `ModCommandX-Source-v<version>.zip`.
 3. `"Publish Release.bat" <version> <path-to-zip>` — creates tag/release `v<version>`
-   on EnvianMods/ModCommandX and uploads the zip. That **is** the announcement:
+   on EnvianMods/ModCommandX and uploads the zip (refused if it lacks the uninstaller;
+   more files after the zip go up as extra assets). That **is** the announcement:
    installed copies check `/releases/latest` hourly and show their update banner,
    linking to that release page. (A missing or private repo is simply no banner.)
 4. Optionally `"Archive Release.bat" <version> <build-zip> <source-zip> --notes "..."`

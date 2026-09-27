@@ -225,6 +225,10 @@ body.reduced-motion * { transition: none !important; animation: none !important;
   color: var(--amber); border-bottom: 1px solid rgba(var(--amber-rgb), 0.18);
 }
 .card-body { padding: 14px 18px 0; }
+/* Settings -> Uninstall, the one destructive card (tokens only, so both themes) */
+.card.danger-zone { border-color: rgba(var(--danger-rgb), 0.4); background: linear-gradient(180deg, rgba(var(--danger-rgb), 0.05), transparent 70%), var(--panel); }
+.card.danger-zone .card-title { color: var(--danger); border-bottom-color: rgba(var(--danger-rgb), 0.25); }
+.card.danger-zone .setting-value { word-break: normal; }
 
 .stat-row { display: flex; justify-content: space-between; align-items: baseline; padding: 5px 0; gap: 14px; }
 .stat-label { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); flex-shrink: 0; }

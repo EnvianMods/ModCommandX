@@ -476,6 +476,24 @@
             <p class="dim settings-note" id="set-sdk-help">The SDK is a separate download and updates on its own &mdash; Mod Command X only hosts its window, so a new SDK needs no new Mod Command X. <a href="#" class="ext-link" id="link-sdk-get">Get the Zero Company Mod SDK &#8599;</a></p>
           </div>
         </div>
+
+        <!-- Last card on purpose: starts the standalone uninstaller
+             (build/uninstaller) and quits — see README "Uninstalling". -->
+        <div class="card holo wide danger-zone">
+          <div class="card-title">UNINSTALL</div>
+          <div class="card-body settings-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-name">Uninstall Mod Command X</span>
+                <span class="setting-value dim">Shows exactly what is removed and kept before anything happens. Mods installed in the game stay; your stored mod library is kept unless you tick the box there. Mod Command X closes when the uninstaller opens.</span>
+              </div>
+              <div class="setting-actions">
+                <button class="btn danger" id="btn-uninstall-app">Uninstall Mod Command X&hellip;</button>
+              </div>
+            </div>
+            <p class="dim settings-note hidden" id="uninstall-note"></p>
+          </div>
+        </div>
       </section>
 
       <!-- ======================= FORGE (the linked SDK's own UI) =======

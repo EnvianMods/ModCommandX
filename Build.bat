@@ -24,9 +24,12 @@ echo  [3/3] Fetching bundled tools and building the exe...
 call npm run build-exe
 if errorlevel 1 goto :buildFail
 if not exist "release\ModCommandX.exe" goto :buildFail
+if not exist "release\Uninstall Mod Command X.exe" goto :buildFail
 copy /y "release\ModCommandX.exe" "ModCommandX.exe" >nul
+copy /y "release\Uninstall Mod Command X.exe" "Uninstall Mod Command X.exe" >nul
 echo.
 echo  DONE. ModCommandX.exe is now in this folder - run it from here.
+echo  "Uninstall Mod Command X.exe" next to it removes the app again (also in Settings).
 echo  It keeps its data in %%APPDATA%%\ModCommandX, so updates never touch your mods.
 echo.
 if defined ZC_BUILD_QUIET exit /b 0
@@ -52,7 +55,8 @@ exit /b 1
 
 :buildFail
 echo.
-echo  The build did not produce release\ModCommandX.exe. Scroll up for the error.
+echo  The build did not produce release\ModCommandX.exe and release\Uninstall Mod Command X.exe.
+echo  Scroll up for the error.
 echo  Running Build.bat again usually fixes an interrupted download.
 echo.
 pause

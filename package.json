@@ -10,7 +10,8 @@
     "dist": "electron-builder --win portable",
     "fetch-tools": "node build/fetch-tools.js",
     "build-exe": "node build/fetch-tools.js && electron-builder --win portable --publish never",
-    "build": "npm ci --no-audit --no-fund && node build/fetch-tools.js && electron-builder --win portable --publish never"
+    "build": "npm ci --no-audit --no-fund && node build/fetch-tools.js && electron-builder --win portable --publish never",
+    "build-uninstaller": "node build/build-uninstaller.js"
   },
   "author": "Fulme",
   "license": "MIT",
@@ -26,6 +27,8 @@
     "appId": "com.zerocompany.modcommandx",
     "productName": "Mod Command X",
     "afterPack": "build/after-pack.js",
+    "beforePack": "build/before-pack.js",
+    "afterAllArtifactBuild": "build/after-all-artifacts.js",
     "directories": {
       "output": "release"
     },
@@ -40,6 +43,14 @@
       {
         "from": "tools",
         "to": "tools"
+      },
+      {
+        "from": "build/uninstaller",
+        "to": "uninstaller",
+        "filter": [
+          "bin/Uninstall Mod Command X.exe",
+          "uninstall-linux.sh"
+        ]
       }
     ],
     "win": {

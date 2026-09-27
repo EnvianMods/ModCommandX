@@ -33,6 +33,19 @@ Mod Command X keeps its settings in %APPDATA%\ModCommandX and your mod archive
 replace the exe freely. Reinstalling a mod at another version joins the same
 entry: use its "versions" button to roll back or try an archived version.
 
+UNINSTALLING
+------------
+Run "Uninstall Mod Command X.exe" (next to ModCommandX.exe), or use
+Settings -> Uninstall Mod Command X... It lists everything it removes and
+keeps, with sizes, and asks you to confirm. It removes the app's settings,
+its browser profile and caches, %TEMP%\ModCommandX, the nxm:// link handler
+(only if it points at Mod Command X) and the Steam update freeze (only if
+Mod Command X set it), then the exe files themselves. Mods installed in the
+game stay and keep working. Your stored mod library is KEPT unless you tick
+"Also delete my stored mod library" - keep it and a reinstall restores
+everything. Nothing of the regular Zero Company Mod Command is touched. A log
+goes to %TEMP%\ModCommandX-uninstall.log.
+
 NOTES
 -----
 - The Holonet has two tabs: Nexus Mods, and GitHub - GitHub mods curated
