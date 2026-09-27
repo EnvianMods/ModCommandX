@@ -46,7 +46,11 @@ NOTES
   your API key); there is no separate switch in the app.
 - .zip, .7z and .rar archives all work out of the box (7-Zip ships with the app).
 - UE4SS (needed for Lua/DLL mods) installs with one click in Settings, using
-  the "UE4SS for Star Wars Zero Company" package from Nexus Mods.
+  the "UE4SS for Star Wars Zero Company" package from Nexus Mods - never the
+  stock GitHub build. A stock or unknown UE4SS already in the game is spotted
+  and switched with one click (your UE4SS mods, mods.txt and settings are
+  kept), and a newer file on Nexus is installed automatically while the game
+  is closed (Settings -> UE4SS, "Keep UE4SS up to date automatically").
 - Diagnostics shows conflicts between your mods, including which game assets
   overlap and which mod wins.
 

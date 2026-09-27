@@ -208,6 +208,56 @@ package.json (the version Mod SDK manifests are checked against).
   linked, the SDK's own Forge workbench (both bring their own look), and the
   operating system's own menus and dialogs.
 
+**UE4SS comes from one place — and stays up to date** *(ported from upstream
+v1.9.15, adapted to X's API key and one-click downloads)*
+- Mod Command X installs, updates and repairs exactly one UE4SS: **"UE4SS for
+  Star Wars Zero Company"** on Nexus Mods — UE4SS plus this game's signatures,
+  loader settings and helpers. The general-purpose build from GitHub is gone
+  from the app: no GitHub section in ⧗ Versions, no "install the GitHub build
+  instead?" prompt without an API key, and no silent fallback to it when Nexus
+  cannot be reached (the install says so and you try again later).
+- Every UE4SS button (Download & install, Update, Switch, ⧗ Versions,
+  Diagnostics) is one click like the rest of the app: premium accounts
+  download straight away with progress on the button; free accounts get that
+  exact file's download page in the Nexus panel, queued, with Slow download
+  pressed for you (or in your own browser, per "Where to finish free
+  downloads"). Without an API key, the button offers to take you to
+  Settings → Nexus Mods to add it; say no and it shows you the page instead.
+- **Already have a UE4SS?** Mod Command X now tells you which one. If it is the
+  stock build (no Zero Company signatures, or installed from GitHub — by an
+  older build, or by Mod Command for this game) or one it cannot identify,
+  Settings → UE4SS, the dashboard and Diagnostics say *"UE4SS installed is the
+  stock build — switch to the Star Wars Zero Company UE4SS (Nexus)"*, with a
+  one-click **Switch to the Nexus build**. The Settings item in the rail shows
+  **!** until you do. A Nexus build Mod Command installed is recognised by its
+  files and tracked for updates from then on.
+- **Your UE4SS setup survives every install, update and switch.** Only UE4SS's
+  own files are replaced: your UE4SS mods are untouched, a built-in you
+  switched off stays off, `mods.txt` keeps every line you had (including the
+  managed start order) and only gains entries the new build adds, and the
+  settings you changed in `UE4SS-settings.ini` — the console, the GUI console,
+  anything you edited — are carried into the new build's file. Files the
+  previous package shipped and the new one does not are cleared away; nothing
+  else in the `ue4ss` folder is — the Mod SDK's logs and state, `.jmap` and
+  header dumps stay where they are and are not copied into ⧗ Versions either.
+  The build that was there before is always kept in ⧗ Versions (in X's own
+  `versions/ue4ss-runtime-mcx` of the shared archive, apart from Mod Command's
+  kept builds), one click to put back.
+- **Kept up to date.** Mod Command X checks the Nexus page at startup and every
+  hour, like mod updates (or press **Check now**). When a newer file is up,
+  Settings shows **Update to …** and the rail shows **⬆**. With the new
+  **Keep UE4SS up to date automatically** setting (on by default) and a
+  premium account, the update just happens — but never under a running game:
+  while Zero Company is open, you are told and it installs a few minutes after
+  you close the game. Turn the setting off, or use a free account, and you get
+  one heads-up per new file; on a free account the one click on Update opens
+  the file's download page and starts it — nothing opens by itself.
+- ⧗ Versions now lists every file on that Nexus page — the current main file
+  first, then older uploads — for anyone keeping the game on an older build.
+- A UE4SS copied over the Nexus build by hand is noticed (Diagnostics offers
+  the switch back), and installing or restoring UE4SS while the game is
+  running now stops with a clear "close the game first".
+
 ---
 
 # Inherited history — Zero Company Mod Command up to 1.9.14
