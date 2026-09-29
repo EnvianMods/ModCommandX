@@ -1,16 +1,15 @@
 # Mod Command X — Changelog
 
-## Mod Command X 1.0.1 (unreleased)
+## Mod Command X 1.0.1 — 2026-09-29
 
 **Nexus panel: signing in works again**
 - Fixed: after signing in to Nexus in the built-in Nexus panel, Mod Command X
-  kept saying "Sign in to download" and never started the download. Nexus's
-  current pages show your account differently (your profile picture now comes
-  from avatars.nexusmods.com, and "Log out" sits inside the closed account
-  menu), so the panel did not recognise a signed-in page. It now reads the
-  page's own signed-in flag, your account picture and name in the header, and
-  the account cookie the panel holds — and it never mistakes the guest profile
-  Nexus shows to signed-out visitors for an account.
+  kept saying "Sign in to download" and never started the download. Nexus
+  changed how its pages show that you are signed in, so the panel no longer
+  recognised it. The panel now checks the page's own signed-in state, your
+  account picture and name in the header, and its saved Nexus sign-in — and
+  it never mistakes the guest profile Nexus shows to signed-out visitors for
+  an account.
 - "◈ Sign in to Nexus" now opens Nexus's sign-in page with a link back to the
   exact file, the way Nexus's own "Log in" buttons do, so you land on the file
   right after signing in and the download continues by itself. If Nexus
@@ -29,8 +28,7 @@
   whether the sign-in page was visited, Cloudflare checks shown and passed,
   Nexus error pages, refused page parts by site, what auto-click pressed and
   whether the download link reached Mod Command X. The same events now appear
-  in the session log (addresses without their query strings; never cookie
-  values).
+  in the session log (page addresses only, never sign-in cookies).
 - Privacy: the report and the log no longer show your Nexus account name — it
   appears as its first two letters followed by `***`, as the report's footer
   promises.
