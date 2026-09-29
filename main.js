@@ -85,6 +85,11 @@ const report = require('./lib/report');
 const sdkLink = require('./lib/sdk-link');
 const { configureBrowserIdentity, configureNexusSession, learnClientHints } = require('./lib/nexus-browser');
 const { configureWebPermissions, lockWebContentsDevices } = require('./lib/web-permissions');
+const nexusPanel = require('./lib/nexus-panel');
+// What the embedded Nexus panel did (signed in? checks, error pages, blocked
+// subresources, auto-click, nxm) - logged on each state change and summarised
+// in the support report. See lib/nexus-panel.js.
+const panelDiary = nexusPanel.createPanelDiary({ log });
 // Before 'ready': every renderer, out-of-process iframe and worker (the Nexus
 // panel's Cloudflare Turnstile frame included) presents the plain Chrome user
 // agent, not Electron's — see lib/nexus-browser.js.
@@ -469,7 +474,7 @@ async function refreshUpstreamRunning() {
 // it anywhere it might appear) or a diagnostics report. A stored key is only
 // removed by the user's own "Clear".
 
-const { redactSecrets, registerSecret, forgetSecrets } = require('./lib/redact');
+const { redactSecrets, registerSecret, forgetSecrets, maskAccountName, registerAccountName } = require('./lib/redact');
 
 const KEY_REQUIRED = 'Add your Nexus Mods API key in Settings first.';
 
@@ -623,6 +628,105 @@ async function signOutNexusWebsite() {
   await ses.clearCache();
   try { await ses.clearAuthCache(); } catch (_) {}
   try { ses.flushStorageData(); } catch (_) {}
+  // The cookie-store check's marker went with everything else: plant it again
+  // so the next start does not mistake this sign-out for lost cookies.
+  try { await plantCookieSentinel(ses); } catch (_) {}
+}
+
+// ------------------------------------------------ Nexus panel diagnostics
+// Subresource errors (by origin and status, never a path or query) per panel
+// page load, for the renderer's "page partly blocked" check and the report.
+function watchNexusPanelSession() {
+  const ses = session.fromPartition('persist:nexus');
+  ses.webRequest.onCompleted({ urls: ['*://*/*'] }, (d) => {
+    if (d.statusCode >= 400 && d.resourceType !== 'mainFrame' && d.webContentsId) {
+      panelDiary.subresource(d.webContentsId, d.url, d.statusCode);
+    }
+  });
+  checkPanelCookieStore(ses).catch((err) => log('warn', `nexus panel: cookie store check failed (${err.message})`));
+}
+
+function noteNxmCaught(url) {
+  let ids = {};
+  try { const l = nexus.parseNxm(url); ids = { modId: l.modId, fileId: l.fileId }; } catch (_) {}
+  panelDiary.event('nxm', ids);
+}
+
+// Cookies the panel cannot read back. Release builds encrypt the panel's
+// cookies with the OS (EnableCookieEncryption fuse: DPAPI on Windows, keyed
+// by "Local State" in the Electron profile). If that key cannot be decrypted
+// (a profile copied from another Windows account, a DPAPI/credential reset,
+// "Local State" replaced), Chromium drops every stored cookie silently - the
+// Nexus login is lost at every start and the panel asks to sign in again.
+// Chromium reports nothing an app can catch, so this checks it: a marker
+// cookie for a reserved, never-resolving host (mcx-cookie-check.invalid - it
+// is never sent anywhere) is kept in the panel's cookie store, and a note in
+// the app data says it was planted. Next start, a missing marker means the
+// stored cookies did not survive.
+const COOKIE_SENTINEL = { url: 'https://mcx-cookie-check.invalid/', name: 'mcx_cookie_check' };
+function cookieSentinelFile() { return path.join(store.dataDir, 'nexus-panel-cookies.json'); }
+
+async function plantCookieSentinel(ses) {
+  await ses.cookies.set({
+    ...COOKIE_SENTINEL, value: '1', secure: true, httpOnly: true, sameSite: 'strict',
+    expirationDate: Math.floor(Date.now() / 1000) + 400 * 24 * 3600,
+  });
+  try { await ses.cookies.flushStore(); } catch (_) {}
+  fs.writeFileSync(cookieSentinelFile(), JSON.stringify({ planted: new Date().toISOString() }));
+}
+
+async function checkPanelCookieStore(ses) {
+  const problems = [];
+  try {
+    if (!safeStorage.isEncryptionAvailable()) problems.push('the OS key store is not available, so the panel\'s cookies cannot be kept encrypted');
+  } catch (_) {}
+  let cookies = null;
+  try {
+    cookies = await ses.cookies.get({});
+  } catch (err) {
+    problems.push(`its cookies could not be read (${err.message})`);
+  }
+  let planted = null;
+  try { planted = JSON.parse(fs.readFileSync(cookieSentinelFile(), 'utf8')).planted || null; } catch (_) {}
+  if (cookies) {
+    const marker = cookies.some((c) => c.name === COOKIE_SENTINEL.name && /mcx-cookie-check\.invalid$/.test(c.domain || ''));
+    if (planted && !marker) {
+      problems.push('the cookies saved last time could not be read back (not decryptable - an OS key store / DPAPI problem - or deleted outside Mod Command X), so the Nexus sign-in was lost; if this repeats at every start, the OS key store cannot decrypt the panel cookies');
+    }
+    const nexusCount = cookies.filter((c) => nexusPanel.domainMatches(c.domain, nexusPanel.NEXUS_COOKIE_HOSTS)).length;
+    log('info', `nexus panel: cookie store readable - ${nexusCount} nexusmods.com cookie(s)`
+      + `${nexusPanel.authCookieSignal(cookies, nexusPanel.NEXUS_COOKIE_HOSTS) ? ', a signed-in cookie present' : ', no signed-in cookie'}`);
+    if (!marker) { try { await plantCookieSentinel(ses); } catch (err) { problems.push(`the cookie check marker could not be saved (${err.message})`); } }
+  }
+  if (problems.length) {
+    const text = problems.join('; ');
+    log('warn', `nexus panel: cookie problem - ${text}`);
+    panelDiary.cookieProblem(text);
+  }
+}
+
+// Once per run, when a panel page shows the account: which nexusmods.com
+// cookie NAMES the session holds beyond the anonymous set (never values) —
+// what confirms or corrects lib/nexus-panel.js's AUTH_COOKIES on a real login.
+let signedInCookiesLogged = false;
+async function logSignedInCookieNames() {
+  if (signedInCookiesLogged) return;
+  signedInCookiesLogged = true;
+  const cookies = await session.fromPartition('persist:nexus').cookies.get({});
+  const extra = nexusPanel.unknownCookieNames(cookies);
+  log('info', `nexus panel: signed-in session cookie names beyond the anonymous set: ${extra.length ? extra.join(', ') : 'none'}`
+    + `; account cookie ${nexusPanel.authCookieSignal(cookies, nexusPanel.NEXUS_COOKIE_HOSTS) || 'not found'}`);
+}
+
+// Signed-in cookie check for the panel's renderer: the NAME of the auth
+// cookie found (see lib/nexus-panel.js), never a value.
+async function panelCookieSignal() {
+  try {
+    const cookies = await session.fromPartition('persist:nexus').cookies.get({});
+    return { cookie: nexusPanel.authCookieSignal(cookies), cookieError: null };
+  } catch (err) {
+    return { cookie: null, cookieError: err.message };
+  }
 }
 
 // --------------------------------------------------------- adult content
@@ -678,6 +782,7 @@ async function loadNexusUser(key, validated = null) {
   const who = validated || await nexus.validateKey(key); // throws on a bad key
   // Adult content stays hidden until the account's own preferences answer.
   nexusUser = { name: who.name, isPremium: who.isPremium, adult: false, adultBlurImages: false, ageVerified: false };
+  registerAccountName(who.name); // the log and the report name it masked only
   await refreshNexusPreferences();
   return nexusUser;
 }
@@ -710,7 +815,7 @@ function initNexusAuth() {
   // a rejected key just leaves nexusUser empty — the key is KEPT either way;
   // the next call that needs the user retries, and Settings shows the error.
   loadNexusUser(key).then((u) => {
-    log('info', `nexus: API key belongs to ${u.name}${u.isPremium ? ' (premium)' : ''}`);
+    log('info', `nexus: API key belongs to ${maskAccountName(u.name)} (${u.isPremium ? 'Premium' : 'Free'} account)`);
     try { sendEvent({ type: 'state', state: fullState() }); } catch (_) {}
   }).catch((err) => log('info', `nexus: stored API key could not be validated at startup (${err.message})`));
 }
@@ -1207,6 +1312,7 @@ app.on('web-contents-created', (_e, contents) => {
   if (contents.getType() !== 'webview') return;
   const catchNxm = (url) => {
     if (typeof url === 'string' && url.startsWith('nxm://')) {
+      noteNxmCaught(url);
       handleNxm(url);
       return true;
     }
@@ -1214,6 +1320,9 @@ app.on('web-contents-created', (_e, contents) => {
   };
   contents.on('will-navigate', (e, url) => { if (catchNxm(url)) e.preventDefault(); });
   contents.on('will-redirect', (e, url) => { if (catchNxm(url)) e.preventDefault(); });
+  // A new page load in the panel: its failed-subresource count starts over
+  // (the last one's is folded into the panel session's totals).
+  contents.on('did-navigate', () => { try { panelDiary.pageErrors(contents.id, { reset: true }); } catch (_) {} });
   contents.setWindowOpenHandler(({ url }) => {
     if (catchNxm(url)) return { action: 'deny' };
     // Keep navigation inside the panel; never spawn OS/native windows from Nexus.
@@ -1229,11 +1338,12 @@ app.whenReady().then(() => {
   // The Nexus panel's session uses the same plain Chrome user agent as the
   // app-wide fallback set above. See lib/nexus-browser.js.
   try { configureNexusSession(session, app); } catch (err) { log('error', `nexus panel session setup failed: ${err.message}`); }
+  try { watchNexusPanelSession(); } catch (err) { log('error', `nexus panel diagnostics setup failed: ${err.message}`); }
   // Deny-by-default web permissions for the Nexus panel and the app window
   // (Electron grants everything otherwise). An nxm:// that reaches the OS
   // handoff instead of will-navigate is routed to handleNxm in-process. See
   // lib/web-permissions.js.
-  try { configureWebPermissions(session, { log, onNxm: (url) => handleNxm(url) }); } catch (err) { log('error', `web permission setup failed: ${err.message}`); }
+  try { configureWebPermissions(session, { log, onNxm: (url) => { noteNxmCaught(url); handleNxm(url); } }); } catch (err) { log('error', `web permission setup failed: ${err.message}`); }
   // Load the stored Nexus API key (migrating a plaintext one to the OS store)
   // and look up who it belongs to in the background.
   try { initNexusAuth(); } catch (err) { log('error', `Nexus API key could not be read: ${err.message}`); }
@@ -2057,7 +2167,7 @@ const handlers = {
     const how = storeNexusKey(trimmed);
     await loadNexusUser(trimmed, who);
     promotedCache.mods = null; // the adult answer may have changed
-    log('info', `nexus: API key saved for ${nexusUser.name}${nexusUser.isPremium ? ' (premium)' : ''}${how === 'encrypted' ? ' (encrypted with the OS key store)' : ' (session only — no secure OS key store, nothing written to disk)'}`);
+    log('info', `nexus: API key saved for ${maskAccountName(nexusUser.name)} (${nexusUser.isPremium ? 'Premium' : 'Free'} account)${how === 'encrypted' ? ' (encrypted with the OS key store)' : ' (session only — no secure OS key store, nothing written to disk)'}`);
     return fullState();
   },
   // The user's own "Clear" — the only way a stored key is ever removed. Wipes
@@ -2075,6 +2185,30 @@ const handlers = {
     await signOutNexusWebsite();
     log('info', 'nexus: signed out of the Nexus website panel (persist:nexus session cleared)');
     return { cleared: true };
+  },
+  // The Nexus panel asks: which signed-in cookie does its session hold (name
+  // only), and which subresources of its current page failed (origin/status
+  // counts). `reset` = a new page load starts.
+  'nexus-panel-state': async (_e, payload = {}) => {
+    const id = Number(payload && payload.webContentsId) || 0;
+    const { cookie, cookieError } = await panelCookieSignal();
+    return { cookie, cookieError, errors: id ? panelDiary.pageErrors(id, { reset: !!payload.reset }) : {} };
+  },
+  // Panel events for the session log and the report's "Nexus panel" section.
+  // Only known kinds and short fields; URLs are reduced to origin + path there.
+  'nexus-panel-event': async (_e, payload = {}) => {
+    const KINDS = ['open', 'close', 'signed-in', 'challenge', 'challenge-passed', 'signin-page', 'oops', 'blocked', 'auto-reload', 'autoclick'];
+    const kind = String((payload && payload.kind) || '');
+    if (!KINDS.includes(kind)) return false;
+    const str = (v, n = 300) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined);
+    if (kind === 'signed-in' && payload.state === 'in') logSignedInCookieNames().catch(() => {});
+    panelDiary.event(kind, {
+      url: str(payload.url), target: str(payload.target), state: str(payload.state, 12), signal: str(payload.signal, 60),
+      detail: str(payload.detail, 120), reason: str(payload.reason, 80), action: str(payload.action, 40),
+      count: num(payload.count), modId: num(payload.modId), fileId: num(payload.fileId), view: !!payload.view,
+    });
+    return true;
   },
   'validate-nexus-key': async () => {
     await loadNexusUser(await nexusAccessToken());
@@ -3444,6 +3578,10 @@ function buildSupportReport() {
     sevenZip: !!findSevenZip(store.settings.sevenZipPath),
     sevenZipBundled: !store.settings.sevenZipPath && findSevenZip(null) === bundledSevenZip() && !!bundledSevenZip(),
     diagItems: diagnostics().items,
+    nexusAccount: nexusSignedIn()
+      ? (nexusUser ? { name: maskAccountName(nexusUser.name), type: nexusUser.isPremium ? 'Premium' : 'Free' } : { name: null, type: 'unknown (the key has not been validated this session)' })
+      : null,
+    nexusPanel: panelDiary.reportLines(),
     logText: logText(250),
     paths: { gamePath: store.settings.gamePath, dataDir: store.dataDir },
   });

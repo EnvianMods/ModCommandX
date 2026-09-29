@@ -456,9 +456,13 @@ automatically for IoStore package inspection; a different copy can be selected i
   IoStore mods installed while retoc was unavailable.
 - **Support reports** — Diagnostics → Copy support report / Save report…:
   a single sanitized text block (game/launcher/build, tools, full mod list
-  with origins and priorities, conflicts, hook collisions, duplicates, health
-  scan, session log). Paths, usernames and machine names are scrubbed by
-  `lib/report.js`; the in-memory session log lives in `lib/log.js`.
+  with origins and priorities, conflicts, hook collisions, duplicates, the
+  Nexus panel's last sessions (signed in or not and why, Cloudflare checks,
+  Nexus error pages, refused page parts, auto-click, nxm handoffs) and the
+  API key's account type, health scan, session log). Paths, usernames,
+  machine names and the Nexus account name (shown as its first two letters +
+  `***`) are scrubbed by `lib/report.js` / `lib/redact.js`; the in-memory
+  session log lives in `lib/log.js`.
 - **Diagnostics** — installation health scan: game layout, Steam manifest/build,
   `~mods` presence, the `SWZeroCompany/Mods` plugin folder (how many plugin folders
   are there and how many Mod Command X manages, so hand-copied ones are visible),

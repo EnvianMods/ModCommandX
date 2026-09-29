@@ -3044,9 +3044,31 @@ $$('[data-close-modal]').forEach((b) =>
 //
 // One panel at a time: a second free-account download pressed while one is
 // open waits in nexusDl.queue and opens when the current one closes.
-const nexusDl = { open: false, sawProgress: false, done: false, target: '', viewOnly: false, auto: null, queue: [] };
-const NEXUS_LOGIN_URL = 'https://users.nexusmods.com/auth/sign_in';
+const nexusDl = {
+  open: false, sawProgress: false, done: false, target: '', viewOnly: false, auto: null, queue: [],
+  // Signed in? 'in' | 'out' | 'unknown' (NexusAutoclick.combineSignedIn) and
+  // the signal that said so. problem: 'oops' | 'blocked' on this page load.
+  signedIn: 'unknown', signal: null, problem: null, autoReloaded: false, inChallenge: false,
+};
 const NEXUS_AUTO_TICK_MS = 600;
+// This many failed (4xx/5xx) subresources from Nexus's own hosts on one page
+// load = the page is only partly there (its CSS/fonts refused), which is when
+// Nexus's "Something went wrong" page appears.
+const NEXUS_BLOCKED_MIN = 6;
+const NEXUS_OWN_ORIGIN = /^https:\/\/([a-z0-9-]+\.)?nexusmods\.com$/i;
+
+// Panel diagnostics for the session log / support report (main.js,
+// lib/nexus-panel.js). Fire-and-forget; never toasts.
+function nexusPanelEvent(kind, data = {}) {
+  try { const p = window.zc.nexusPanelEvent({ kind, ...data }); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+}
+async function nexusPanelState(view) {
+  try {
+    const id = view && view.getWebContentsId ? view.getWebContentsId() : 0;
+    const res = await window.zc.nexusPanelState(id);
+    return res && res.ok ? res.data : null;
+  } catch (_) { return null; }
+}
 // A page that reloads itself after every press would otherwise be pressed on
 // every load; two loads with a press and no file is where the user takes over.
 const NEXUS_AUTO_MAX_CLICK_LOADS = 2;
@@ -3060,12 +3082,20 @@ function setNexusPill(text, kind) {
   status.className = 'nexus-dl-pill' + (kind ? ' ' + kind : '');
 }
 
-function setNexusStrip(text, kind) {
+// action (optional): { label, onClick } — a button at the end of the strip.
+function setNexusStrip(text, kind, action) {
   const strip = $('#nexus-dl-auto');
   if (!strip) return;
   strip.classList.toggle('hidden', !text);
   strip.textContent = text || '';
   strip.className = 'nexus-dl-auto' + (kind ? ' ' + kind : '') + (text ? '' : ' hidden');
+  if (text && action) {
+    const b = document.createElement('button');
+    b.className = 'btn tiny nexus-dl-auto-btn';
+    b.textContent = action.label;
+    b.addEventListener('click', action.onClick);
+    strip.append(' ', b);
+  }
 }
 
 function nexusAutoEnabled() {
@@ -3102,7 +3132,10 @@ function openNexusDownload(name, url, opts = {}) {
   }
   nexusDl.open = true; nexusDl.sawProgress = false; nexusDl.done = false; nexusDl.target = url;
   nexusDl.sawLogin = false;
+  nexusDl.problem = null; nexusDl.autoReloaded = false; nexusDl.inChallenge = false;
+  nexusDl.signedIn = 'unknown'; nexusDl.signal = null; nexusDl.checkedUrl = '';
   nexusDl.viewOnly = !!opts.view;
+  nexusPanelEvent('open', { target: url, view: !!opts.view, modId: opts.auto && opts.auto.modId, fileId: opts.auto && opts.auto.fileId });
   nexusDl.auto = !opts.view && opts.auto
     ? { modId: opts.auto.modId, fileId: opts.auto.fileId, url, on: nexusAutoEnabled(),
       clickLoads: 0, docClicked: false, sawLogin: false, phase: null }
@@ -3232,6 +3265,7 @@ async function openBrowserDownload(res, name) {
 }
 
 function closeNexusDownload() {
+  if (nexusDl.open) nexusPanelEvent('close');
   nexusDl.open = false;
   nexusDl.auto = null;
   if (nexusAutoTimer) { clearInterval(nexusAutoTimer); nexusAutoTimer = null; }
@@ -3273,6 +3307,10 @@ async function nexusAutoTick() {
     setNexusStrip('Sign in to Nexus Mods here — the download continues by itself once you are back on the file.', 'warn');
     return;
   }
+  // Nexus's error page / a partly blocked page: its strip (with Reload) stays.
+  if (nexusDl.problem) return;
+  // Nothing is pressed before this page load's signed-in check has answered.
+  if (nexusDl.checkedUrl !== url) { if (!nexusDl.checking) refreshNexusAccount(); return; }
   if (!NexusAutoclick.isTargetPage(url, a.url)) {
     // (Signed in and Nexus sent them somewhere else: refreshNexusAccount takes
     // them back to the file once the page positively shows the account.)
@@ -3286,13 +3324,26 @@ async function nexusAutoTick() {
     setNexusStrip('Click “Slow download” to continue — Mod Command X installs the file as soon as Nexus hands it over.', 'warn');
     return;
   }
+  // The page plainly says this session is signed out: nothing to press until
+  // the user has signed in (the sign-in page brings them back to this file).
+  if (nexusDl.signedIn === 'out') {
+    setNexusStrip('Sign in to Nexus Mods first (◈ Sign in to Nexus, top right) — you come back to this file and the download continues by itself.', 'warn');
+    return;
+  }
   nexusAutoBusy = true;
   let rep = null;
   try {
-    rep = await view.executeJavaScript(NexusAutoclick.stepCode(a), true);
+    rep = await view.executeJavaScript(NexusAutoclick.stepCode({ modId: a.modId, fileId: a.fileId, signedIn: nexusDl.signedIn }), true);
   } catch (_) { rep = null; } finally { nexusAutoBusy = false; }
   if (!rep || nexusDl.auto !== a || nexusDl.sawProgress) return;
   if (rep.clicked && rep.clicked.length && !a.docClicked) { a.docClicked = true; a.clickLoads += 1; }
+  // Log each press once, and a stop (challenge / fallback / login) once per phase change.
+  const pressed = (rep.clicked || []).length;
+  if (pressed > (a.loggedPresses || 0)) {
+    for (const k of rep.clicked.slice(a.loggedPresses || 0)) nexusPanelEvent('autoclick', { action: `pressed ${k}`, url });
+    a.loggedPresses = pressed;
+  } else if (pressed < (a.loggedPresses || 0)) a.loggedPresses = pressed; // new page load
+  if (rep.phase !== a.phase && ['challenge', 'fallback', 'login'].includes(rep.phase)) nexusPanelEvent('autoclick', { action: `stopped: ${rep.phase}`, url });
   a.phase = rep.phase;
   const secs = rep.countdown != null && rep.countdown > 0 ? ` — ${rep.countdown} s` : '';
   switch (rep.phase) {
@@ -3338,8 +3389,16 @@ function nexusDlError() {
   if (nexusDl.auto) setNexusStrip('The download failed — press “Slow download” to try again.', 'warn');
 }
 
-// Best-effort: detect whether the embedded Nexus session is signed in (and the
-// account name) by inspecting the loaded page — robust across cookie changes.
+// Is the embedded Nexus session signed in (and the account name)? Two
+// sources, combined by NexusAutoclick.combineSignedIn: the page itself
+// (NexusAutoclick.pageState — the page's own isLoggedIn flag, the header's
+// member avatar / account name / logout, or a visible "Log in") and the
+// session's signed-in cookie, whose NAME the main process reports
+// (lib/nexus-panel.js). Nothing is inferred from the mere absence of a marker:
+// with neither source answering, the state is 'unknown' and the pill is left
+// alone. The same pass spots Nexus's "Something went wrong" page and a page
+// whose own CSS/fonts were refused (partly blocked).
+let nexusRecheckTimer = null;
 async function refreshNexusAccount() {
   const view = $('#nexus-dl-view');
   const chip = $('#nexus-dl-account');
@@ -3350,29 +3409,51 @@ async function refreshNexusAccount() {
   try { cur = view.getURL(); } catch (_) { return; }
   if (!/^https?:/i.test(cur) || NexusAutoclick.isSignInFlow(cur)) return;
   try { if (NexusAutoclick.isChallengeTitle(view.getTitle())) return; } catch (_) { return; }
-  let res = null;
+  if (nexusDl.checking) return;
+  nexusDl.checking = true;
+  let page = null;
+  let st = null;
   try {
-    // Conservative: only claim "signed in" on a POSITIVE marker (a logout link
-    // or account avatar). Never infer it from the mere absence of a login link —
-    // Nexus renders its header late, which would falsely read as signed in.
-    res = await view.executeJavaScript(`(() => {
-      const logout = [...document.querySelectorAll('a')].some(a => {
-        const h = (a.getAttribute('href') || ''), t = (a.textContent || '');
-        return /sign[-_ ]?out|log[-_ ]?out/i.test(h) || /^\\s*(log ?out|sign ?out)\\s*$/i.test(t);
-      });
-      const avatar = !!document.querySelector('header img[src*="/avatars/"], img.avatar, .avatar img');
-      const acct = document.querySelector('header a[href*="/users/"]');
-      const name = acct ? (acct.getAttribute('title') || acct.textContent || '').trim() : '';
-      return { loggedIn: !!(logout || avatar), name };
-    })()`, false);
-  } catch (_) { return; }
-  if (!res) return;
-  if (res.loggedIn) {
-    chip.textContent = res.name ? `◈ ${res.name}` : '◈ Signed in';
+    try { page = await view.executeJavaScript(NexusAutoclick.pageStateCode(), false); } catch (_) { page = null; }
+    st = await nexusPanelState(view);
+  } finally { nexusDl.checking = false; }
+  if (st && st.cookieError && !nexusDl.cookieErrorNoted) {
+    nexusDl.cookieErrorNoted = true;
+    nexusPanelEvent('signed-in', { state: 'unknown', signal: 'cookie store unreadable', url: cur });
+  }
+  if (!nexusDl.open) return;
+  let now = '';
+  try { now = view.getURL(); } catch (_) { return; }
+  if (now !== cur) return; // navigated meanwhile — the next stop re-checks
+  if (page) nexusDl.checkedUrl = cur; // (the page answered: auto-click may go on)
+
+  // Nexus's error page, or a page whose Nexus-hosted parts were refused.
+  if (page && page.oops) { nexusPanelProblem('oops', cur); return; }
+  const errs = (st && st.errors) || {};
+  let blocked = 0;
+  const parts = [];
+  for (const [origin, byStatus] of Object.entries(errs)) {
+    if (!NEXUS_OWN_ORIGIN.test(origin)) continue;
+    for (const [code, n] of Object.entries(byStatus)) { blocked += n; parts.push(`${origin} ${code}×${n}`); }
+  }
+  if (blocked >= NEXUS_BLOCKED_MIN) { nexusPanelProblem('blocked', cur, { count: blocked, detail: parts.join(', ').slice(0, 120) }); }
+
+  const res = NexusAutoclick.combineSignedIn(page, st && st.cookie);
+  if (res.state !== nexusDl.signedIn || res.signal !== nexusDl.signal) {
+    nexusPanelEvent('signed-in', { state: res.state, signal: res.signal || '', url: cur });
+  }
+  nexusDl.signedIn = res.state;
+  nexusDl.signal = res.signal;
+  if (res.state === 'in') {
+    const name = page && page.name;
+    chip.textContent = name ? `◈ ${name}` : '◈ Signed in';
     chip.classList.add('in');
     chip.title = 'Signed in to Nexus Mods in this panel';
+    const pill = $('#nexus-dl-status');
+    if (pill && /Sign in to download/.test(pill.textContent)) setNexusPill(nexusDl.viewOnly ? 'Viewing — close to return' : 'Awaiting download', '');
     // They went through the sign-in pages and Nexus now shows their account on
-    // some other page: return them to the file (once).
+    // some other page: return them to the file (once). (Normally the sign-in
+    // page's redirect_url already brought them straight back.)
     if (nexusDl.open && nexusDl.sawLogin) {
       nexusDl.sawLogin = false;
       if (nexusDl.target && !NexusAutoclick.isTargetPage(cur, nexusDl.target)) {
@@ -3383,11 +3464,39 @@ async function refreshNexusAccount() {
   } else {
     chip.textContent = '◈ Sign in to Nexus';
     chip.classList.remove('in');
-    chip.title = 'Sign in to Nexus Mods so downloads work';
-    if (nexusDl.open && !nexusDl.viewOnly && !nexusDl.sawProgress && !nexusDl.done) {
+    chip.title = 'Sign in to Nexus Mods so downloads work — you come back to this file afterwards';
+    if (res.state === 'out' && nexusDl.open && !nexusDl.viewOnly && !nexusDl.sawProgress && !nexusDl.done) {
       setNexusPill('Sign in to download', '');
     }
+    // The header of Nexus's newer pages renders late: look once more.
+    if (res.state === 'unknown' && !nexusRecheckTimer) {
+      nexusRecheckTimer = setTimeout(() => { nexusRecheckTimer = null; if (nexusDl.open) refreshNexusAccount(); }, 2500);
+    }
   }
+}
+
+// Nexus's "Something went wrong" page / a partly blocked page: once per page
+// load. The first time in a panel session the page is reloaded once by
+// itself; after that the strip offers Reload and the other ways to finish.
+function nexusPanelProblem(kind, url, extra = {}) {
+  if (nexusDl.problem === kind) return;
+  nexusDl.problem = kind;
+  nexusPanelEvent(kind, { url, ...extra });
+  const view = $('#nexus-dl-view');
+  if (!nexusDl.autoReloaded) {
+    nexusDl.autoReloaded = true;
+    nexusPanelEvent('auto-reload', { reason: kind === 'oops' ? 'Nexus error page' : 'page partly blocked' });
+    setNexusStrip(kind === 'oops'
+      ? 'Nexus showed its “Something went wrong” page — reloading it once…'
+      : 'Parts of the Nexus page did not load — reloading it once…', 'warn');
+    setTimeout(() => { try { if (nexusDl.open) view.reload(); } catch (_) {} }, 1500);
+    return;
+  }
+  setNexusStrip((kind === 'oops'
+    ? 'Nexus showed its “Something went wrong” page again.'
+    : 'Parts of the Nexus page were refused again, so it may not work.')
+    + ' Reload it, or finish this download in your own browser: Open in browser ↗ (top right), or Settings → Nexus Mods → “Where to finish free downloads” → My web browser.',
+  'warn', { label: '⟳ Reload', onClick: () => { try { view.reload(); } catch (_) {} } });
 }
 
 (() => {
@@ -3398,14 +3507,35 @@ async function refreshNexusAccount() {
   });
   view.addEventListener('did-stop-loading', () => {
     if (nexusDl.open && !nexusDl.sawProgress && !nexusDl.done) {
-      setNexusPill(nexusDl.viewOnly ? 'Viewing — close to return' : 'Awaiting download', '');
+      const s = $('#nexus-dl-status');
+      // A known signed-out state keeps its "Sign in to download".
+      if (!(s && /Sign in to download/.test(s.textContent) && nexusDl.signedIn === 'out')) {
+        setNexusPill(nexusDl.viewOnly ? 'Viewing — close to return' : 'Awaiting download', '');
+      }
     }
+    nexusChallengeCheck();
     refreshNexusAccount();
   });
+  // Cloudflare's check page: logged when it shows and when it is passed.
+  const nexusChallengeCheck = () => {
+    if (!nexusDl.open) return;
+    let title = ''; let url = '';
+    try { title = view.getTitle(); url = view.getURL(); } catch (_) { return; }
+    if (!/^https?:/i.test(url)) return;
+    const on = NexusAutoclick.isChallengeTitle(title);
+    if (on && !nexusDl.inChallenge) { nexusDl.inChallenge = true; nexusPanelEvent('challenge', { url }); }
+    else if (!on && nexusDl.inChallenge) { nexusDl.inChallenge = false; nexusPanelEvent('challenge-passed', { url }); }
+  };
+  view.addEventListener('page-title-updated', nexusChallengeCheck);
   // A new document is a new page load for the auto-click's once-per-load rule.
   view.addEventListener('did-navigate', (e) => {
     if (nexusDl.auto) { nexusDl.auto.docClicked = false; nexusDl.auto.challengeDoc = false; }
-    if (NexusAutoclick.isLoginPage(e.url)) nexusDl.sawLogin = true;
+    nexusDl.problem = null; // a new page load: an error strip no longer applies
+    nexusDl.checkedUrl = ''; // ...and its signed-in check runs again
+    if (NexusAutoclick.isLoginPage(e.url)) {
+      nexusDl.sawLogin = true;
+      if (nexusDl.open && NexusAutoclick.isSignInFlow(e.url)) nexusPanelEvent('signin-page', { url: e.url });
+    }
   });
   const reload = $('#nexus-dl-reload');
   if (reload) reload.addEventListener('click', () => { try { view.reload(); } catch (_) {} });
@@ -3420,7 +3550,14 @@ async function refreshNexusAccount() {
   const acct = $('#nexus-dl-account');
   if (acct) acct.addEventListener('click', () => {
     if (acct.classList.contains('in')) return;
-    try { view.loadURL(NEXUS_LOGIN_URL); } catch (_) { view.src = NEXUS_LOGIN_URL; }
+    // Nexus's own sign-in page with its own redirect_url back to the exact
+    // file (what its "Log in" links do); the return-to-file in
+    // refreshNexusAccount stays as the fallback.
+    let back = nexusDl.target || '';
+    if (!/^https:\/\/([a-z0-9-]+\.)?nexusmods\.com\//i.test(back)) { try { back = view.getURL(); } catch (_) {} }
+    const url = NexusAutoclick.signInUrl(back);
+    nexusDl.sawLogin = true;
+    try { view.loadURL(url); } catch (_) { view.src = url; }
   });
   const queue = $('#nexus-dl-queue');
   if (queue) queue.addEventListener('click', () => {

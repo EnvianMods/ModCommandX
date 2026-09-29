@@ -65,6 +65,11 @@ contextBridge.exposeInMainWorld('zc', {
   clearNexusKey: () => invoke('clear-nexus-key'),
   // Clears the embedded Nexus website panel's login (persist:nexus session).
   nexusWebSignOut: () => invoke('nexus-web-signout'),
+  // The Nexus panel's diagnostics: the signed-in cookie's NAME (never a value)
+  // and the current page's failed subresources by origin; and panel events
+  // for the session log / support report.
+  nexusPanelState: (webContentsId, reset) => invoke('nexus-panel-state', { webContentsId, reset: !!reset }),
+  nexusPanelEvent: (ev) => invoke('nexus-panel-event', ev),
   validateNexusKey: () => invoke('validate-nexus-key'),
   nexusRefreshUser: () => invoke('nexus-refresh-user'),
   nexusQuota: () => invoke('nexus-quota'),
