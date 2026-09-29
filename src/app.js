@@ -108,6 +108,97 @@ function inlineProgressUpdate(p) {
     if (p.key === key || p.key.startsWith(`${key}:`)) for (const b of set) b.textContent = text;
   }
 }
+// The bottom progress strip (and the Nexus panel's strip) follow every
+// download separately: main.js gives each one an id and a phase (progress,
+// retrying, restarted, done, failed — see downloadToFile in lib/nexus.js).
+// One download shows its name; several show one total ("Downloading 2 files"),
+// by bytes when every size is known. Each download only moves forward unless
+// it really started over, which the label says. Label and bar are written
+// together from the same number, once per frame. Progress without an id
+// (indexing, matching) is tracked by its label.
+const downloads = new Map(); // id -> { key, label, received, total, phase, finished, at, restartedAt }
+const DOWNLOAD_STALE_MS = 60000;
+let downloadsFrame = 0;
+let downloadsClear = null;
+function noteDownload(p) {
+  const id = p.id || `op:${p.label}`;
+  let d = downloads.get(id);
+  // A counter without an id that starts again is a new run of that job.
+  if (d && !p.id && (d.finished || p.received < d.received)) d = null;
+  if (!d) {
+    d = { key: p.key || null, label: p.label || '', received: 0, total: 0, phase: 'progress', finished: false, restartedAt: 0 };
+    downloads.set(id, d);
+  }
+  d.at = Date.now();
+  if (p.total) d.total = p.total;
+  const phase = p.phase || (p.total && p.received >= p.total ? 'done' : 'progress');
+  if (phase === 'failed') downloads.delete(id);
+  else if (phase === 'restarted') { d.received = p.received; d.phase = 'progress'; d.restartedAt = d.at; }
+  else if (phase === 'retrying') d.phase = 'retrying';
+  else if (p.received >= d.received) {
+    if (p.received > d.received || phase === 'done') d.phase = phase;
+    d.received = p.received;
+    if (phase === 'done') d.finished = true;
+  }
+  if (!downloadsFrame) downloadsFrame = requestAnimationFrame(renderDownloads);
+  return d;
+}
+function downloadPct(d) {
+  if (d.finished) return 100;
+  return d.total ? Math.min(100, Math.floor((d.received / d.total) * 100)) : null;
+}
+// { text, pct } for a set of downloads; pct is null when no size is known.
+function downloadsView(list) {
+  const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+  if (list.length === 1) {
+    const d = list[0];
+    const pct = downloadPct(d);
+    const name = d.label.length > 60 ? `${d.label.slice(0, 59)}…` : d.label;
+    let verb = `Downloading ${name}`;
+    if (d.finished) verb = `Downloaded ${name}`;
+    else if (d.phase === 'retrying') verb = `Connection lost — retrying ${name}`;
+    else if (Date.now() - d.restartedAt < 4000) verb = `Retrying ${name} from the start`;
+    return { text: `${verb} — ${pct !== null ? `${pct}%` : mb(d.received)}`, pct };
+  }
+  let pct = null;
+  if (list.every((d) => d.total)) {
+    pct = Math.floor((list.reduce((s, d) => s + (d.finished ? d.total : Math.min(d.received, d.total)), 0)
+      / list.reduce((s, d) => s + d.total, 0)) * 100);
+  } else {
+    const known = list.map(downloadPct).filter((v) => v !== null);
+    if (known.length) pct = Math.floor(known.reduce((s, v) => s + v, 0) / known.length);
+  }
+  const retrying = list.filter((d) => !d.finished && d.phase === 'retrying').length;
+  const amount = pct !== null ? `${pct}%` : mb(list.reduce((s, d) => s + d.received, 0));
+  return { text: `Downloading ${list.length} files — ${amount}${retrying ? ` (${retrying} retrying)` : ''}`, pct };
+}
+function renderDownloads() {
+  downloadsFrame = 0;
+  const now = Date.now();
+  for (const [id, d] of downloads) if (!d.finished && now - d.at > DOWNLOAD_STALE_MS) downloads.delete(id);
+  const list = [...downloads.values()];
+  const box = $('#progress-toast');
+  if (!list.length) { box.classList.add('hidden'); return; }
+  // Finished downloads stay in the total until the whole batch is done, so
+  // the total never drops when one of them completes.
+  const allDone = list.every((d) => d.finished);
+  clearTimeout(downloadsClear);
+  if (allDone) downloadsClear = setTimeout(() => { downloads.clear(); renderDownloads(); }, 1200);
+  const v = downloadsView(list);
+  box.classList.remove('hidden');
+  $('#progress-label').textContent = v.text;
+  $('#progress-fill').style.width = `${v.pct ?? 100}%`;
+  // The Nexus panel follows only downloads of its own mod.
+  const panelMod = nexusDl.auto ? nexusDl.auto.modId : Number((/\/mods\/(\d+)/.exec(nexusDl.target || '') || [])[1]) || null;
+  const mine = list.filter((d) => panelMod && d.key && (d.key === `nexus:${panelMod}` || d.key.startsWith(`nexus:${panelMod}:`)));
+  if (mine.length) nexusDlProgress(downloadsView(mine));
+}
+// A call that showed progress has ended: counters without an id stop here
+// (their job is over); downloads end with their own done/failed phase.
+function progressToastIdle() {
+  for (const [id] of downloads) if (id.startsWith('op:')) downloads.delete(id);
+  renderDownloads();
+}
 function progressKeyFor(mod) {
   const o = mod && mod.origin;
   if (!o) return `mod:${mod && mod.id}`;
@@ -271,7 +362,7 @@ function buildUpdateButton(mod) {
     } finally {
       untrack();
       el.disabled = false;
-      $('#progress-toast').classList.add('hidden');
+      progressToastIdle();
     }
   });
   return el;
@@ -746,7 +837,7 @@ $('#btn-update-all').addEventListener('click', async () => {
     if (res && res.updated) { state = res.state; toast(`“${mod.name}” updated.`); }
     else if (res && res.state) state = res.state;
   }
-  $('#progress-toast').classList.add('hidden');
+  progressToastIdle();
   render();
 });
 
@@ -1061,7 +1152,7 @@ async function runDiagnostics() {
         try { await DIAG_FIXES[item.fix.action](); } finally {
           untrack();
           fix.disabled = false;
-          $('#progress-toast').classList.add('hidden');
+          progressToastIdle();
           runDiagnostics();
         }
       });
@@ -1550,7 +1641,7 @@ $('#btn-update-retoc').addEventListener('click', async () => {
     state = res.state;
     render();
     toast(`retoc ${res.version} installed from GitHub — used for pak inspection from now on.`);
-  } finally { btn.disabled = false; $('#progress-toast').classList.add('hidden'); }
+  } finally { btn.disabled = false; progressToastIdle(); }
 });
 $('#btn-browse-retoc').addEventListener('click', async () => {
   const data = await call('browseToolPath', { key: 'retocPath', title: 'Locate retoc.exe', filterName: 'retoc' });
@@ -1666,7 +1757,7 @@ async function openUe4ssVersionsModal() {
       act.addEventListener('click', async () => {
         act.disabled = true;
         const untrack = trackProgress(act, 'ue4ss'); // every download here is the runtime
-        try { await onClick(); } finally { untrack(); act.disabled = false; $('#progress-toast').classList.add('hidden'); }
+        try { await onClick(); } finally { untrack(); act.disabled = false; progressToastIdle(); }
       });
     }
     r.append(info, act);
@@ -1804,7 +1895,7 @@ async function ue4ssInstallFrom(btn) {
     untrack();
     render(); // the Install button's label follows the new state, not the one captured before
     btn.disabled = false;
-    $('#progress-toast').classList.add('hidden');
+    progressToastIdle();
   }
 }
 $('#chk-ue4ss-auto').addEventListener('change', (e) => saveSetting({ ue4ssAutoUpdate: e.target.checked }));
@@ -1826,7 +1917,7 @@ $('#btn-ue4ss-check').addEventListener('click', async () => {
   } finally {
     untrack();
     btn.disabled = false;
-    $('#progress-toast').classList.add('hidden');
+    progressToastIdle();
   }
 });
 $('#btn-install-zcsdk').addEventListener('click', async () => {
@@ -1834,7 +1925,7 @@ $('#btn-install-zcsdk').addEventListener('click', async () => {
   btn.disabled = true;
   try { await installZcsdkRuntime(); } finally {
     btn.disabled = false;
-    $('#progress-toast').classList.add('hidden');
+    progressToastIdle();
   }
 });
 
@@ -2175,7 +2266,7 @@ function buildBrowseCard(m) {
       } finally {
         untrack();
         installBtn.disabled = false;
-        $('#progress-toast').classList.add('hidden');
+        progressToastIdle();
       }
     });
     const pageBtn0 = document.createElement('button');
@@ -2304,7 +2395,7 @@ async function openNexusVersionsModal(m) {
       } finally {
         untrack();
         act.disabled = false;
-        $('#progress-toast').classList.add('hidden');
+        progressToastIdle();
       }
     });
     row.append(info, act);
@@ -2491,7 +2582,7 @@ async function renderNexusOptionalSection(mod) {
       } finally {
         untrack();
         btn.disabled = false;
-        $('#progress-toast').classList.add('hidden');
+        progressToastIdle();
       }
     };
 
@@ -2723,7 +2814,7 @@ function buildForgeCard(m) {
       } finally {
         untrack();
         installBtn.disabled = false;
-        $('#progress-toast').classList.add('hidden');
+        progressToastIdle();
       }
     });
   } else if (inHangar.length) {
@@ -2752,7 +2843,7 @@ function buildForgeCard(m) {
       } finally {
         untrack();
         installBtn.disabled = false;
-        $('#progress-toast').classList.add('hidden');
+        progressToastIdle();
       }
     });
   } else {
@@ -3310,14 +3401,12 @@ async function nexusAutoTick() {
 }
 
 // Progress + completion for the panel, driven by the shared install events.
-function nexusDlProgress(pct, received) {
+function nexusDlProgress(view) {
   if (!nexusDl.open || nexusDl.done) return;
   nexusDl.sawProgress = true;
   $('#nexus-dl-progress').classList.remove('hidden');
-  $('#nexus-dl-progress-label').textContent = pct !== null
-    ? `Downloading — ${pct}%`
-    : `Downloading — ${(received / 1048576).toFixed(1)} MB`;
-  $('#nexus-dl-progress-bar').style.width = `${pct ?? 100}%`;
+  $('#nexus-dl-progress-label').textContent = view.text;
+  $('#nexus-dl-progress-bar').style.width = `${view.pct ?? 100}%`;
   setNexusPill('Downloading…', 'busy');
   if (nexusDl.auto) setNexusStrip('Nexus handed the file over — downloading and installing…', 'good');
 }
@@ -3549,7 +3638,7 @@ $('#btn-link-mods').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = label;
-    $('#progress-toast').classList.add('hidden');
+    progressToastIdle();
   }
 });
 
@@ -4382,18 +4471,10 @@ window.zc.onEvent((payload) => {
     // A state refresh after download progress means the embedded install finished.
     nexusDlMaybeComplete();
   } else if (payload.type === 'progress') {
-    const box = $('#progress-toast');
-    box.classList.remove('hidden');
-    const pct = payload.total ? Math.round((payload.received / payload.total) * 100) : null;
-    $('#progress-label').textContent = pct !== null
-      ? `Downloading ${payload.label} — ${pct}%`
-      : `Downloading ${payload.label} — ${(payload.received / 1048576).toFixed(1)} MB`;
-    $('#progress-fill').style.width = `${pct ?? 100}%`;
-    if (payload.total && payload.received >= payload.total) {
-      setTimeout(() => box.classList.add('hidden'), 1200);
-    }
-    inlineProgressUpdate(payload);          // on the button that started it
-    nexusDlProgress(pct, payload.received); // mirror into the download panel
+    // The strips repaint on the next frame (renderDownloads); the button that
+    // started this download follows the same tracked numbers.
+    const d = noteDownload(payload);
+    if (d.key) inlineProgressUpdate({ key: d.key, received: d.received, total: d.total });
   }
 });
 
