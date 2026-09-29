@@ -1,5 +1,43 @@
 # Mod Command X — Changelog
 
+## Mod Command X 1.0.1 (unreleased)
+
+**Nexus panel: signing in works again**
+- Fixed: after signing in to Nexus in the built-in Nexus panel, Mod Command X
+  kept saying "Sign in to download" and never started the download. Nexus's
+  current pages show your account differently (your profile picture now comes
+  from avatars.nexusmods.com, and "Log out" sits inside the closed account
+  menu), so the panel did not recognise a signed-in page. It now reads the
+  page's own signed-in flag, your account picture and name in the header, and
+  the account cookie the panel holds — and it never mistakes the guest profile
+  Nexus shows to signed-out visitors for an account.
+- "◈ Sign in to Nexus" now opens Nexus's sign-in page with a link back to the
+  exact file, the way Nexus's own "Log in" buttons do, so you land on the file
+  right after signing in and the download continues by itself. If Nexus
+  sends you somewhere else, the panel still takes you back to the file.
+- While the page says you are signed out, auto-click waits (it only presses
+  "Slow download" once you are signed in), and the strip tells you to sign in.
+- Nexus's "Oops! Something went wrong" page — or a page whose own styles and
+  fonts Nexus refused — is recognised: the panel reloads it once by itself,
+  and if it happens again the strip offers a Reload button and points to
+  "Open in browser ↗" and Settings → Nexus Mods → "My web browser". It never
+  keeps reloading on its own.
+
+**Support reports**
+- New "Nexus panel" section: your Nexus account type (Premium / Free) and what
+  the last panel sessions saw — signed in or not and how that was decided,
+  whether the sign-in page was visited, Cloudflare checks shown and passed,
+  Nexus error pages, refused page parts by site, what auto-click pressed and
+  whether the download link reached Mod Command X. The same events now appear
+  in the session log (addresses without their query strings; never cookie
+  values).
+- Privacy: the report and the log no longer show your Nexus account name — it
+  appears as its first two letters followed by `***`, as the report's footer
+  promises.
+- If the panel's saved cookies cannot be read back at start (for example when
+  Windows can no longer decrypt them, which signs you out of the panel at every
+  start), the log and the report now say so.
+
 ## Mod Command X 1.0.0 — 2026-09-27
 
 Mod Command X is a private side-project build of Zero Company Mod Command,
