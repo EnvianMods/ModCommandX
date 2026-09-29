@@ -38,6 +38,14 @@
   Windows can no longer decrypt them, which signs you out of the panel at every
   start), the log and the report now say so.
 
+**Download progress**
+- Download progress no longer jumps around: the bottom strip and the Nexus
+  panel follow each download on its own (name, or "Downloading 2 files" with
+  one total), label and bar always show the same number, and the same file
+  handed over twice by Nexus downloads once. A dropped connection resumes
+  where it stopped when the server allows it, else restarts, and the strip
+  says so.
+
 ## Mod Command X 1.0.0 — 2026-09-27
 
 Mod Command X is a private side-project build of Zero Company Mod Command,

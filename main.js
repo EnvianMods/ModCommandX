@@ -985,9 +985,24 @@ function pinPlanToParent(plan, modId, fileId, updates, parentMod) {
   };
 }
 
+// Files whose nxm:// is being handled. The site can hand the same file over
+// twice (a second press of Slow download, or the link seen by two of the
+// catch paths); the second is dropped instead of starting a parallel
+// download of the same file.
+const nxmInFlight = new Set();
+
 async function handleNxm(rawUrl) {
+  let busyKey = null;
   try {
     const link = nexus.parseNxm(rawUrl);
+    busyKey = `${link.modId}:${link.fileId}`;
+    if (nxmInFlight.has(busyKey)) {
+      log('info', `nxm: mod ${link.modId} file ${link.fileId} is already downloading — duplicate link ignored`);
+      sendEvent({ type: 'toast', message: 'That file is already downloading.' });
+      busyKey = null;
+      return;
+    }
+    nxmInFlight.add(busyKey);
     // Resolves the renderer's "Waiting for Nexus download…" chip for this file
     // (free downloads finished in the user's own web browser).
     sendEvent({ type: 'nxm-received', modId: link.modId, fileId: link.fileId });
@@ -1006,8 +1021,8 @@ async function handleNxm(rawUrl) {
     if (!fileMeta) { try { fileMeta = await nexus.fileInfo(link.modId, link.fileId, token); } catch (_) {} }
     const fileName = (fileMeta && fileMeta.file_name) || null;
     const uri = await nexus.downloadLink(link, token);
-    const dest = await nexus.downloadToFile(uri, store.stagingDir, fileName, (got, total) => {
-      sendEvent({ type: 'progress', key: `nexus:${link.modId}`, label: info ? info.name : `mod ${link.modId}`, received: got, total });
+    const dest = await nexus.downloadToFile(uri, store.stagingDir, fileName, (got, total, dl) => {
+      sendEvent({ type: 'progress', key: `nexus:${link.modId}`, label: info ? info.name : `mod ${link.modId}`, received: got, total, ...dl });
     });
     try {
       // Where does this file belong — is it the mod itself, or an extra that
@@ -1073,6 +1088,8 @@ async function handleNxm(rawUrl) {
   } catch (err) {
     log('error', `nxm install failed: ${err.message}`);
     sendEvent({ type: 'toast', kind: 'error', message: err.message });
+  } finally {
+    if (busyKey) nxmInFlight.delete(busyKey);
   }
 }
 
@@ -2314,8 +2331,8 @@ const handlers = {
     // embedded panel opens at exactly this file (see embedDownload).
     if (!nexusUser.isPremium) return embedDownload(modId, file.file_id, name);
     const uri = await nexus.downloadLink({ modId, fileId: file.file_id }, token);
-    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: name || `mod ${modId}`, received: got, total });
+    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total, dl) => {
+      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: name || `mod ${modId}`, received: got, total, ...dl });
     });
     try {
       const origin = {
@@ -2495,8 +2512,8 @@ const handlers = {
     if (!file) throw new Error('That file is no longer listed on the mod page.');
     const plan = planNexusInstall(modId, fileId, data, file);
     const uri = await nexus.downloadLink({ modId, fileId }, token);
-    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: `${name || `mod ${modId}`} ${file.version || ''}`, received: got, total });
+    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total, dl) => {
+      sendEvent({ type: 'progress', key: `nexus:${modId}`, label: `${name || `mod ${modId}`} ${file.version || ''}`, received: got, total, ...dl });
     });
     try {
       const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
@@ -2581,8 +2598,8 @@ const handlers = {
     if (!file) throw new Error('That file is no longer listed on the mod page.');
     const plan = pinPlanToParent(planNexusInstall(modId, fileId, data, file), modId, fileId, data.updates, parentMod);
     const uri = await nexus.downloadLink({ modId, fileId }, token);
-    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-      sendEvent({ type: 'progress', key: `nexus:${modId}:${fileId}`, label: `${file.name || file.file_name}${file.version ? ` v${file.version}` : ''}`, received: got, total });
+    const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total, dl) => {
+      sendEvent({ type: 'progress', key: `nexus:${modId}:${fileId}`, label: `${file.name || file.file_name}${file.version ? ` v${file.version}` : ''}`, received: got, total, ...dl });
     });
     try {
       const origin = { type: 'nexus', modId, fileId, version: file.version || null, category: plan.category, fileName: file.file_name || null };
@@ -2792,8 +2809,8 @@ const handlers = {
       detail: `From ${fullName} — release ${release.tag}.\n\nGitHub mods aren't moderated. This repo is on the curated list, but install only from authors you trust.`,
     });
     if (choice.response !== 0) return { cancelled: true };
-    const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total) => {
-      sendEvent({ type: 'progress', key: `github:${fullName}`, label: fullName, received: got, total });
+    const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total, dl) => {
+      sendEvent({ type: 'progress', key: `github:${fullName}`, label: fullName, received: got, total, ...dl });
     });
     try {
       const res = await engine.install(dest, {
@@ -2822,8 +2839,8 @@ const handlers = {
     if (origin.type === 'github') {
       const release = await github.latestReleaseFor(origin.repo);
       if (!release) throw new Error('The new release has no installable archive.');
-      const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total) => {
-        sendEvent({ type: 'progress', key: `github:${origin.repo}`, label: mod.name, received: got, total });
+      const dest = await nexus.downloadToFile(release.assetUrl, store.stagingDir, release.assetName, (got, total, dl) => {
+        sendEvent({ type: 'progress', key: `github:${origin.repo}`, label: mod.name, received: got, total, ...dl });
       });
       try {
         const res = await engine.replaceOrigin(
@@ -2845,8 +2862,8 @@ const handlers = {
           || nexus.pickPrimaryFile(data.files);
         if (!file) throw new Error('The updated mod has no downloadable main file.');
         const uri = await nexus.downloadLink({ modId: origin.modId, fileId: file.file_id }, token);
-        const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-          sendEvent({ type: 'progress', key: `nexus:${origin.modId}`, label: mod.name, received: got, total });
+        const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total, dl) => {
+          sendEvent({ type: 'progress', key: `nexus:${origin.modId}`, label: mod.name, received: got, total, ...dl });
         });
         try {
           const newVersion = file.version || mod.updateInfo.latest;
@@ -2985,8 +3002,8 @@ const handlers = {
     if (pkg.source === 'github') {
       try {
         sendEvent({ type: 'toast', message: `Downloading ZCSDK Runtime ${pkg.version} from GitHub…` });
-        downloaded = await nexus.downloadToFile(pkg.url, store.stagingDir, pkg.asset, (got, total) => {
-          sendEvent({ type: 'progress', label: 'ZCSDK Runtime', received: got, total });
+        downloaded = await nexus.downloadToFile(pkg.url, store.stagingDir, pkg.asset, (got, total, dl) => {
+          sendEvent({ type: 'progress', label: 'ZCSDK Runtime', received: got, total, ...dl });
         });
         zipPath = downloaded;
       } catch (e) {
@@ -3021,8 +3038,8 @@ const handlers = {
     if (process.platform !== 'win32') throw new Error('retoc updates are Windows-only in this app.');
     const bundledTools = fs.existsSync(path.join(__dirname, 'tools')) ? path.join(__dirname, 'tools')
       : (process.resourcesPath ? path.join(process.resourcesPath, 'tools') : null);
-    const r = await retocDl.installLatest(store.dataDir, bundledTools, nexus.downloadToFile, (got, total) => {
-      sendEvent({ type: 'progress', label: 'retoc', received: got, total });
+    const r = await retocDl.installLatest(store.dataDir, bundledTools, nexus.downloadToFile, (got, total, dl) => {
+      sendEvent({ type: 'progress', label: 'retoc', received: got, total, ...dl });
     });
     store.settings.retocInstalled = { tag: r.tag, version: r.version, asset: r.asset, publishedAt: r.publishedAt, installedAt: new Date().toISOString(), path: r.path };
     store.settings.retocNoticedVersion = r.version;
@@ -3145,8 +3162,8 @@ async function installUe4ssFromNexus(fileId, { auto = false } = {}) {
   const before = ue4ssOrigin();
   keepCurrentUe4ss();
   const uri = await nexus.downloadLink({ modId: ue4ssDl.NEXUS_MOD_ID, fileId }, token);
-  const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total) => {
-    sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS (Nexus) ${file.version || ''}`, received: got, total });
+  const dest = await nexus.downloadToFile(uri, store.stagingDir, file.file_name, (got, total, dl) => {
+    sendEvent({ type: 'progress', key: 'ue4ss', label: `UE4SS (Nexus) ${file.version || ''}`, received: got, total, ...dl });
   });
   let result;
   try {
