@@ -928,6 +928,9 @@ body.reduced-motion * { transition: none !important; animation: none !important;
 .zc-chip.zc-ok { color: var(--holo); border-color: rgba(var(--holo-rgb), 0.45); }
 .zc-chip.zc-bad { color: var(--amber); border-color: rgba(var(--amber-rgb), 0.55); cursor: pointer; background: transparent; font-family: inherit; }
 .zc-chip.zc-bad:hover { color: var(--bg); background: var(--amber); }
+.zc-chip.zc-note { color: var(--text-dim); }
+.import-meta.warn { color: var(--amber); }
+.import-warn { color: var(--amber); }
 .settings-note { font-size: 11.5px; line-height: 1.5; margin: 6px 2px 0; }
 .build-chip { color: var(--coral); background: rgba(var(--coral-rgb), 0.08); border-color: rgba(var(--coral-rgb), 0.4); }
 
