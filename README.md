@@ -459,12 +459,28 @@ automatically for IoStore package inspection; a different copy can be selected i
     Import as "Old ZCSDK Runtime copy — safe to clean up" with its own 🗑 Clean
     up button. **Remove** (Settings → ZCSDK Runtime) takes both parts out
     together, after listing the SDK mods that stop working.
+  - **Its UE4SS signatures.** Runtime v0.10+ ships UE4SS custom signature files
+    (`UE4SS_Signatures\*.lua` in the zip — at the top, under `ue4ss\` as in the
+    `_manual.zip`, or inside one wrapper folder). Without them UE4SS 3.0.1's scans
+    fail on the current game build and no Lua mod runs. The installer copies them
+    to `Win64\ue4ss\UE4SS_Signatures\` and records exactly what it wrote
+    (`<data>\zcsdk-signatures.json`, name + sha256); a file of yours with the same
+    name is kept in `<data>\zcsdk-signatures-backup\` and put back when the
+    runtime is removed. They are runtime parts: an update that ships none keeps
+    them, swapping or rolling back a part keeps them, switching other mods off
+    never touches them, and only **Remove** (or uninstalling the last part) takes
+    them out — and only while they still hold what was written. A runtime missing
+    them shows as needing an update. UE4SS installs, updates and restores never
+    overwrite or retire them (the package's copy of the same name is held and
+    put back when the runtime goes), and they do not count as UE4SS signatures
+    when telling a stock UE4SS from the Nexus build.
   - **Self-heal.** At startup and after every mod operation, if SDK mods are
-    installed and the runtime this app installed is missing, incomplete or
-    switched off, it is put back: the app's own copy is switched on / redeployed,
-    or the bundled copy is reinstalled; when putting it back needs a download from
-    GitHub, the app asks first. Nothing happens after you removed it yourself, and
-    with the game running it waits for the game to close.
+    installed and the runtime this app installed is missing, incomplete,
+    switched off or without its UE4SS signature files, it is put back: the app's
+    own copy is switched on / redeployed, or the bundled copy is reinstalled; when
+    putting it back needs a download from GitHub, the app asks first. Nothing
+    happens after you removed it yourself, and with the game running it waits
+    for the game to close.
 - **Incompatibility check** — pairwise conflict detection between enabled mods:
   **CONFIRMED** pairs modify the same game assets (asset paths extracted from each mod's
   `.utoc` via `retoc list --path`); **SUSPECTED** pairs ship identically named files.

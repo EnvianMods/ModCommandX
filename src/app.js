@@ -1974,6 +1974,7 @@ $('#btn-remove-zcsdk').addEventListener('click', async () => {
     state = res.state;
     render();
     toast(`ZCSDK Runtime removed${res.removed && res.removed.length ? ` (${res.removed.join(', ')})` : ''}.`
+      + `${res.signaturesRemoved ? ` Its ${res.signaturesRemoved} UE4SS signature file${res.signaturesRemoved === 1 ? '' : 's'} went with it (any of yours they had replaced are back).` : ''}`
       + `${res.leftover && res.leftover.length ? ` ${res.leftover.join(' and ')} ${res.leftover.length === 1 ? 'is' : 'are'} still in ue4ss\\Mods — not installed by Mod Command X, so left alone.` : ''}`, 'info', 9000);
   } finally {
     btn.disabled = false;
@@ -2017,7 +2018,8 @@ async function installZcsdkRuntime() {
   state = res.state;
   pendingUe4ssOrder = null;
   render();
-  toast(`ZCSDK Runtime ${res.version ? res.version + ' ' : ''}installed${res.source === 'github' ? ' from GitHub' : ''} — content mods built with the Zero Company Mod SDK are now discovered by the game.`);
+  toast(`ZCSDK Runtime ${res.version ? res.version + ' ' : ''}installed${res.source === 'github' ? ' from GitHub' : ''} — content mods built with the Zero Company Mod SDK are now discovered by the game.`
+    + `${res.signatures ? ` Its ${res.signatures} UE4SS signature file${res.signatures === 1 ? '' : 's'} are in ue4ss\\UE4SS_Signatures.` : ''}`);
   return true;
 }
 
