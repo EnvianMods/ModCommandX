@@ -1,5 +1,55 @@
 # Mod Command X — Changelog
 
+## Mod Command X 1.0.2 (unreleased)
+
+**Fixed: Import could delete or switch off the ZCSDK Runtime**
+- Hangar Bay → Import listed an old copy of ZCSDKBridge left over in the mod
+  archive as an "orphaned archive entry", ticked it for you, and adopting it
+  replaced your installed ZCSDKBridge with that old copy. With the game
+  running this left the bridge switched off; with the game closed it could
+  delete the whole ZCSDKBridge folder — and every mod built with the Zero
+  Company Mod SDK stopped working. This can no longer happen:
+- The ZCSDK Runtime (ZCSDKBridge + ZCSDKLoader) is now a protected dependency.
+  Only Settings → ZCSDK Runtime installs, updates or replaces it. While you
+  have SDK mods installed, its Hangar rows say "◆ Required by N SDK mods" and
+  can't be switched off, uninstalled, rolled back or renamed; Disable all,
+  squad profiles and Apply start order leave it on.
+- It is never offered for adoption, never taken for "another version" of
+  something you install or adopt, and Mod Command's own runtime entries in the
+  shared archive are no longer added to Mod Command X.
+- An old runtime copy in the archive now shows in Import as "Old ZCSDK Runtime
+  copy — safe to clean up", with its own Clean up button (never ticked, never
+  adopted).
+- New: Settings → ZCSDK Runtime → **Remove** takes both parts out together,
+  after listing the SDK mods that will stop working.
+- Self-heal: at startup and after any change to your mods, if SDK mods are
+  installed and the runtime is missing, incomplete or switched off, Mod Command
+  X puts it back (from its own copy, or the bundled one; it asks first when
+  that needs a download) and tells you. If the game is running it waits until
+  you close it. If you removed the runtime yourself, it stays removed.
+
+**Safer for every mod**
+- Import: orphaned archive entries are no longer pre-ticked, and each one says
+  what adopting it does — "installs as a new mod", "older than your installed
+  … — added to its ⧗ Versions only", or "REPLACES your installed X v2.0.0 with
+  v3.0.0". An entry that replaces an installed mod must be ticked by hand, and
+  Adopt asks once more.
+- Switching a mod off removes only the files Mod Command X put there. A file
+  in the mod's folder that it did not deploy (a settings file the mod wrote,
+  something you added) is kept, and the log says so.
+- While Star Wars Zero Company is running, Mod Command X refuses to switch,
+  remove, update, roll back, rename or reorder mods, apply a squad profile, or
+  adopt from Import, with a clear "close the game first" message — the game
+  has those files open, which is what broke things half way before.
+- If replacing a mod fails part way (an update, an adoption, a rollback, a
+  runtime reinstall), the version you had is put back exactly as it was,
+  instead of being left switched off or half replaced.
+- A mod that was off stays off through an update, adoption, rollback or
+  restore: the new copy goes in switched off, instead of being put into the
+  game and taken out again.
+- Adopting a UE4SS mod folder that was switched off no longer deletes it from
+  the game.
+
 ## Mod Command X 1.0.1 — 2026-09-29
 
 **Nexus panel: signing in works again**

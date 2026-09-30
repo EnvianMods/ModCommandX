@@ -447,6 +447,24 @@ automatically for IoStore package inspection; a different copy can be selected i
   stays bundled as the offline fallback. Existing copies are vaulted and replaced
   by name; installing an SDK-built mod without a working runtime offers the install
   immediately, and UE4SS is fetched first when it is missing.
+  - **A protected dependency.** Its two parts (and anything the runtime installer
+    placed) are installed, updated and replaced only from Settings → ZCSDK Runtime.
+    While any installed mod needs the runtime (it ships a `*.zcsdk.lua`), the
+    Hangar rows show "◆ Required by N SDK mods" and can't be switched off,
+    uninstalled, rolled back or renamed; Disable all, squad profiles and Apply
+    start order leave them on (their `enabled.txt` always stays). They are never
+    offered for adoption, never matched as "another version" of an incoming mod,
+    and the main Mod Command's runtime records are not adopted from the shared
+    archive. An orphaned archive entry that is an old runtime copy shows in
+    Import as "Old ZCSDK Runtime copy — safe to clean up" with its own 🗑 Clean
+    up button. **Remove** (Settings → ZCSDK Runtime) takes both parts out
+    together, after listing the SDK mods that stop working.
+  - **Self-heal.** At startup and after every mod operation, if SDK mods are
+    installed and the runtime this app installed is missing, incomplete or
+    switched off, it is put back: the app's own copy is switched on / redeployed,
+    or the bundled copy is reinstalled; when putting it back needs a download from
+    GitHub, the app asks first. Nothing happens after you removed it yourself, and
+    with the game running it waits for the game to close.
 - **Incompatibility check** — pairwise conflict detection between enabled mods:
   **CONFIRMED** pairs modify the same game assets (asset paths extracted from each mod's
   `.utoc` via `retoc list --path`); **SUSPECTED** pairs ship identically named files.
@@ -542,10 +560,21 @@ Mods keep their canonical files in the **mod archive** — by default
 manifest), so mods survive app updates and deletions; Settings → Paths can move
 it anywhere or reset it (moving away copies only X's own mods — see below).
 Enabling copies files into the game, disabling removes them, uninstalling
-deletes the library copy (unless Mod Command still uses it). A fresh install
+deletes the library copy (unless Mod Command still uses it). Disabling removes
+only the files the mod deployed and then the folders left empty — a file in a
+mod's folder that X did not put there (a settings file the mod wrote, something
+you added) stays, and is noted in the log. While Star Wars Zero Company is
+running, X refuses to switch, remove, update, roll back or reorder mods (and
+Import won't adopt): the game has those files loaded. A replace that fails
+half way (a version update, an adoption, a rollback, a runtime reinstall) puts
+the previous version back exactly as it was. A fresh install
 that finds the archive picks up every stored mod in place, and a one-time scan after the first game
 connection offers any unmanaged/orphaned/other-manager mods for adoption (also
-on demand: Import existing → "Import from a manager folder…"). The settings
+on demand: Import existing → "Import from a manager folder…"). Orphaned archive
+entries are never pre-ticked; each says what adopting it does ("installs as a
+new mod", "older than your installed … — added to its ⧗ Versions only", or
+"REPLACES your installed X v1 with v2"), and a replacing entry must be ticked
+by hand and confirmed. The settings
 file itself lives in the per-user app-data folder —
 `%APPDATA%\ModCommandX` on Windows — never beside the exe
 (`data/manager-data.json` when running from source).
