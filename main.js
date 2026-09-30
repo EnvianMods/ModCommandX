@@ -1557,7 +1557,16 @@ async function healZcsdkRuntime(reason) {
   if (zcsdkHealBusy || !store.settings.gamePath || store.settings.zcsdkRemovedByUser) return null;
   zcsdkHealBusy = true;
   try {
-    const first = engine.zcsdkHealPlan(zcsdkRt.availableRuntime());
+    let first = engine.zcsdkHealPlan(zcsdkRt.availableRuntime());
+    // The runtime has none (or not all) of its UE4SS signature files: only a
+    // newer release may bring them (the bundled copy can be older) — read
+    // latest.json first (cached for an hour) before deciding there is
+    // nothing to do.
+    const sg = first.action === 'none' && first.reason === 'healthy' ? engine.zcsdkStatus().signatures : null;
+    if (sg && (!sg.files.length || sg.installed < sg.files.length)) {
+      try { await zcsdkRt.latestRuntime(); } catch (_) {}
+      first = engine.zcsdkHealPlan(zcsdkRt.availableRuntime());
+    }
     if (first.action === 'none') return null;
     if (!store.settings.zcsdkRuntimeWanted && !store.mods.some((m) => isZcsdkRuntimeRecord(m))) return null;
     if (gameRunningNow()) {
@@ -1602,7 +1611,9 @@ async function healZcsdkRuntime(reason) {
     store.save();
     log('warn', `ZCSDK Runtime self-heal (${reason}): reinstalled the bundled ${pkg.version || 'copy'} (${res.replaced} previous part(s) replaced) — ${plan.reason}`);
     sendEvent({ type: 'state', state: fullState() });
-    sendEvent({ type: 'toast', kind: 'warn', message: `The ZCSDK Runtime your SDK mods need was missing or incomplete — reinstalled it (${pkg.version || 'bundled copy'}).` });
+    sendEvent({ type: 'toast', kind: 'warn', message: plan.sigsMissing
+      ? `The ZCSDK Runtime's UE4SS signature files were missing (without them UE4SS mods do not run) — reinstalled the runtime (${pkg.version || 'bundled copy'}) to put them back.`
+      : `The ZCSDK Runtime your SDK mods need was missing or incomplete — reinstalled it (${pkg.version || 'bundled copy'}).` });
     return { installed: pkg.version };
   } catch (err) {
     log('error', `ZCSDK Runtime self-heal (${reason}) failed: ${err.message}`);
@@ -3180,8 +3191,9 @@ const handlers = {
     store.settings.zcsdkRuntimeWanted = true;
     store.settings.zcsdkRemovedByUser = false;
     store.save();
-    log('info', `ZCSDK Runtime ${version || ''} installed from ${source} (${res.replaced} previous cop${res.replaced === 1 ? 'y' : 'ies'} replaced)`);
-    return { state: fullState(), version, source, replaced: res.replaced };
+    const sigs = (res.signatures || []).length;
+    log('info', `ZCSDK Runtime ${version || ''} installed from ${source} (${res.replaced} previous cop${res.replaced === 1 ? 'y' : 'ies'} replaced${sigs ? `; ${sigs} UE4SS signature file${sigs === 1 ? '' : 's'} in ue4ss\\UE4SS_Signatures` : ''})`);
+    return { state: fullState(), version, source, replaced: res.replaced, signatures: sigs };
   },
 
   // Settings → ZCSDK Runtime → Remove: both parts together, after the
@@ -3192,6 +3204,7 @@ const handlers = {
     store.settings.zcsdkRemovedByUser = true;
     store.save();
     log('info', `ZCSDK Runtime removed (${res.removed.join(', ') || 'nothing managed'})`
+      + `${res.signaturesRemoved ? `; ${res.signaturesRemoved} UE4SS signature file(s) of the runtime removed` : ''}`
       + `${res.leftover.length ? `; left in place (not installed by Mod Command X): ${res.leftover.join(', ')}` : ''}`
       + `${res.dependents.length ? `; ${res.dependents.length} SDK mod(s) now lack it` : ''}`);
     return { state: fullState(), ...res, status: undefined };
@@ -3246,7 +3259,9 @@ function spawnGameExe(detection) {
 const GAME_RUNNING_UE4SS = 'Close Star Wars Zero Company first — the running game has UE4SS loaded, so its files cannot be replaced until the game exits.';
 
 function ue4ssFingerprint() {
-  return ue4ssDl.fingerprint(store.settings.gamePath ? path.join(store.settings.gamePath, WIN64_REL) : null);
+  if (!store.settings.gamePath) return ue4ssDl.fingerprint(null);
+  // The ZCSDK Runtime's own signature files are no evidence of the UE4SS build.
+  return ue4ssDl.fingerprint(path.join(store.settings.gamePath, WIN64_REL), { ignoreSignatures: engine.zcsdkSignatureNames() });
 }
 
 // Which UE4SS is on disk: { origin: 'none'|'nexus'|'stock'|'unknown', switchable, label, reason, build }.

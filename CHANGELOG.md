@@ -2,6 +2,23 @@
 
 ## Mod Command X 1.0.2 (unreleased)
 
+**Fixed: UE4SS mods did not run after installing the ZCSDK Runtime**
+- The ZCSDK Runtime now installs its UE4SS signature files into
+  `ue4ss\UE4SS_Signatures`. Without them, UE4SS can't find what it needs in the
+  current game build, so none of your UE4SS mods ran — including the runtime's
+  own loader. Update the runtime from Settings → ZCSDK Runtime (it now shows
+  "update available" when its signatures are missing; with SDK mods installed
+  Mod Command X offers it by itself).
+- A signature file of yours with the same name is kept and put back if you
+  remove the runtime. Your other signature files are never touched.
+- The signatures stay through runtime updates (even one that ships none),
+  reinstalls and rollbacks, and when other mods are switched off or removed.
+  Only Settings → ZCSDK Runtime → Remove takes them out.
+- Installing, updating or restoring UE4SS never overwrites them, and they no
+  longer make a stock UE4SS look like an unknown build.
+- Works with every runtime package layout, including the `_manual.zip` one
+  (everything under `ue4ss\`).
+
 **Fixed: Import could delete or switch off the ZCSDK Runtime**
 - Hangar Bay → Import listed an old copy of ZCSDKBridge left over in the mod
   archive as an "orphaned archive entry", ticked it for you, and adopting it
