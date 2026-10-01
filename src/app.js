@@ -403,6 +403,8 @@ function buildChildRow(child, parent) {
     (child.origin && child.origin.fileName) || null,
   ].filter(Boolean).join('  ·  ');
   main.append(name, meta);
+  const childNotice = buildFolderNotice(child);
+  if (childNotice) main.appendChild(childNotice);
 
   const toggle = document.createElement('input');
   toggle.type = 'checkbox';
@@ -458,6 +460,42 @@ function buildChildRow(child, parent) {
   return row;
 }
 
+// A UE4SS mod deployed under a folder other than its own folder name (an
+// older build named the folder after the display name, so a rename moved
+// it): one notice in its row, with a one-click move back. Nothing moves
+// without that click.
+function buildFolderNotice(mod) {
+  const n = mod.ue4ssFolderNotice;
+  if (!n) return null;
+  const box = document.createElement('div');
+  box.className = 'folder-notice';
+  const text = document.createElement('span');
+  text.append('Deployed as ');
+  const a = document.createElement('span'); a.className = 'mono'; a.textContent = `‘${n.deployedAs}’`;
+  const b = document.createElement('span'); b.className = 'mono'; b.textContent = `‘${n.own}’`;
+  text.append(a, ' — the mod’s own folder name is ', b);
+  text.title = 'UE4SS mods can depend on their folder name: an addon finds its parent by it, a Lua mod builds paths from it, '
+    + 'and mods.txt lines written by other tools name it. Renaming a mod in Mod Command X no longer moves its folder.';
+  const use = document.createElement('button');
+  use.className = 'btn tiny';
+  use.textContent = 'Use original name';
+  use.title = `Move ue4ss\\Mods\\${n.deployedAs} to ue4ss\\Mods\\${n.own} (files and mods.txt line). Close the game first.`;
+  use.addEventListener('click', async () => {
+    const data = await verifiedCall('useOwnUe4ssFolder', [mod.id], 'Move');
+    if (data) { state = data; render(); toast(`“${mod.name}” now uses its own folder ue4ss\\Mods\\${n.own}.`); }
+  });
+  const keep = document.createElement('button');
+  keep.className = 'btn ghost tiny';
+  keep.textContent = 'Keep as is';
+  keep.title = 'Hide this notice — the mod stays in its current folder.';
+  keep.addEventListener('click', async () => {
+    const data = await call('dismissUe4ssFolderNotice', mod.id);
+    if (data) { state = data; render(); }
+  });
+  box.append(text, use, keep);
+  return box;
+}
+
 function renderMods() {
   const list = $('#mod-list');
   list.innerHTML = '';
@@ -504,13 +542,18 @@ function renderMods() {
     meta.className = 'mod-meta';
     const parts = [
       `${mod.files.length} file${mod.files.length === 1 ? '' : 's'}`,
-      mod.loadPriority != null ? `priority ${mod.loadPriority}` : null,
+      mod.loadPriority != null
+        ? `priority ${mod.loadPriority}${state.settings.keepOriginalPakNames ? ' (not applied)' : ''}`
+        : null,
+      mod.modType === 'ue4ss-mod' && mod.ue4ssFolder ? `folder ${mod.ue4ssFolder}` : null,
       kids.length ? `+ ${kids.length} optional` : null,
       mod.sourceArchive || null,
       `installed ${new Date(mod.installedAt).toLocaleDateString()}`,
     ].filter(Boolean);
     meta.textContent = parts.join('  ·  ');
     main.append(name, meta);
+    const folderNotice = buildFolderNotice(mod);
+    if (folderNotice) main.appendChild(folderNotice);
 
     // Optional files installed under this mod fold away behind a caret.
     let caret = null;
@@ -877,15 +920,23 @@ function renderOrder() {
   list.innerHTML = '';
   const mods = orderableMods();
   $('#order-empty').classList.toggle('hidden', mods.length > 0);
+  // "Keep original pak file names" on: the game orders ~mods by file name,
+  // so the list is shown (and kept) but marked as not applied, and locked.
+  const originalNames = !!(state && state.settings.keepOriginalPakNames);
+  $('#order-original-note').classList.toggle('hidden', !originalNames || !mods.length);
+  if (originalNames) pendingOrder = null;
+  const pakName = (m) => (m.files || []).map((f) => f.libraryRelative.split(/[\\/]/).pop())
+    .filter((n) => /\.(pak|utoc|ucas)$/i.test(n)).sort((x, y) => x.toLowerCase().localeCompare(y.toLowerCase()))[0] || '';
   const order = pendingOrder
     ? pendingOrder.map((id) => mods.find((m) => m.id === id)).filter(Boolean)
     : mods;
 
   order.forEach((mod, idx) => {
     const row = document.createElement('div');
-    row.className = `order-row${mod.enabled ? '' : ' disabled-mod'}`;
-    row.draggable = true;
+    row.className = `order-row${mod.enabled ? '' : ' disabled-mod'}${originalNames ? ' order-off' : ''}`;
+    row.draggable = !originalNames;
     row.dataset.id = mod.id;
+    if (originalNames) row.title = 'Not applied while original names are kept — the game loads ~mods alphabetically by file name.';
 
     const grip = document.createElement('span');
     grip.className = 'order-grip';
@@ -898,7 +949,9 @@ function renderOrder() {
     name.textContent = mod.name;
     const hint = document.createElement('span');
     hint.className = 'order-hint';
-    hint.textContent = idx === order.length - 1 ? 'loads last — wins conflicts' : '';
+    hint.textContent = originalNames
+      ? `not applied · file ${pakName(mod)}`
+      : (idx === order.length - 1 ? 'loads last — wins conflicts' : '');
     row.append(grip, num, name, hint);
 
     row.addEventListener('dragstart', (e) => {
@@ -910,8 +963,9 @@ function renderOrder() {
     list.appendChild(row);
   });
 
-  $('#btn-apply-order').disabled = !pendingOrder;
-  $('#btn-rollback-order').disabled = !(state && state.lastOrderBackup);
+  $('#btn-apply-order').disabled = !pendingOrder || originalNames;
+  $('#btn-rollback-order').disabled = !(state && state.lastOrderBackup) || originalNames;
+  $('#btn-suggest-order').disabled = originalNames;
 }
 
 $('#order-list').addEventListener('dragover', onOrderDragOver);
@@ -1589,6 +1643,7 @@ function renderSettings() {
     || (state.sevenZipBundled ? 'Bundled with Mod Command X (7-Zip 25.01)' : (state.sevenZip ? 'Auto-detected' : 'Auto-detect (not found)'));
   $('#chk-close-on-launch').checked = !!state.settings.closeOnLaunch;
   $('#chk-reduced-motion').checked = !!state.settings.reducedMotion;
+  $('#chk-keep-pak-names').checked = !!state.settings.keepOriginalPakNames;
   $('#set-theme').value = currentTheme();
   $('#chk-autoclick-nexus').checked = state.settings.autoClickNexus !== false;
   $('#set-nexus-via').value = state.settings.nexusDownloadVia === 'browser' ? 'browser' : 'panel';
@@ -2041,6 +2096,18 @@ async function offerZcsdkRuntime(needing) {
 }
 $('#chk-close-on-launch').addEventListener('change', (e) => saveSetting({ closeOnLaunch: e.target.checked }));
 $('#chk-reduced-motion').addEventListener('change', (e) => saveSetting({ reducedMotion: e.target.checked }));
+// Renames files in the game (every enabled pak mod is redeployed), so it has
+// its own call; a refusal (game running, a name two mods share) leaves the
+// switch where it was.
+$('#chk-keep-pak-names').addEventListener('change', async (e) => {
+  const on = e.target.checked;
+  e.target.disabled = true;
+  toast(on ? 'Switching pak files to their original names…' : 'Switching pak files back to load-order names…', 'info', 3000);
+  try {
+    const data = await call('setKeepPakNames', on);
+    if (data) { state = data; render(); } else e.target.checked = !on;
+  } finally { e.target.disabled = false; }
+});
 // Applied at once, then saved (the save's render() finds it already applied).
 $('#set-theme').addEventListener('change', (e) => { applyTheme(e.target.value); saveSetting({ theme: e.target.value }); });
 $('#chk-autoclick-nexus').addEventListener('change', (e) => saveSetting({ autoClickNexus: e.target.checked }));
