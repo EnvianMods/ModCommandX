@@ -1,4 +1,4 @@
-MOD COMMAND X v1.0.1
+MOD COMMAND X v1.0.2
 A private side-by-side build of Zero Company Mod Command
 for STAR WARS: Zero Company
 

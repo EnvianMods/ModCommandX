@@ -1,71 +1,56 @@
 # Mod Command X — Changelog
 
-## Mod Command X 1.0.2 (unreleased)
+## Mod Command X 1.0.2 — 2026-10-01
 
 **Fixed: UE4SS mods did not run after installing the ZCSDK Runtime**
 - The ZCSDK Runtime now installs its UE4SS signature files into
   `ue4ss\UE4SS_Signatures`. Without them, UE4SS can't find what it needs in the
   current game build, so none of your UE4SS mods ran — including the runtime's
-  own loader. Update the runtime from Settings → ZCSDK Runtime (it now shows
-  "update available" when its signatures are missing; with SDK mods installed
-  Mod Command X offers it by itself).
+  own loader.
+- If you installed the runtime with Mod Command X 1.0.1, it is missing these
+  files. Mod Command X 1.0.2 puts them back by itself when SDK mods are
+  installed, or press Settings → ZCSDK Runtime → Update / Reinstall.
 - A signature file of yours with the same name is kept and put back if you
   remove the runtime. Your other signature files are never touched.
-- The signatures stay through runtime updates (even one that ships none),
-  reinstalls and rollbacks, and when other mods are switched off or removed.
-  Only Settings → ZCSDK Runtime → Remove takes them out.
-- Installing, updating or restoring UE4SS never overwrites them, and they no
-  longer make a stock UE4SS look like an unknown build.
-- Works with every runtime package layout, including the `_manual.zip` one
-  (everything under `ue4ss\`).
+- The signatures stay through runtime updates, reinstalls and rollbacks, and
+  when other mods are switched off or removed. Installing, updating or
+  restoring UE4SS never overwrites them. Only Settings → ZCSDK Runtime →
+  Remove takes them out.
+- The ZCSDK Runtime bundled for offline installs is now v0.12 (ZCSDKBridge
+  0.5.3, ZCSDKLoader 1.8.29), with its signature files.
 
 **Fixed: Import could delete or switch off the ZCSDK Runtime**
-- Hangar Bay → Import listed an old copy of ZCSDKBridge left over in the mod
-  archive as an "orphaned archive entry", ticked it for you, and adopting it
-  replaced your installed ZCSDKBridge with that old copy. With the game
-  running this left the bridge switched off; with the game closed it could
-  delete the whole ZCSDKBridge folder — and every mod built with the Zero
-  Company Mod SDK stopped working. This can no longer happen:
-- The ZCSDK Runtime (ZCSDKBridge + ZCSDKLoader) is now a protected dependency.
-  Only Settings → ZCSDK Runtime installs, updates or replaces it. While you
-  have SDK mods installed, its Hangar rows say "◆ Required by N SDK mods" and
-  can't be switched off, uninstalled, rolled back or renamed; Disable all,
-  squad profiles and Apply start order leave it on.
-- It is never offered for adoption, never taken for "another version" of
-  something you install or adopt, and Mod Command's own runtime entries in the
-  shared archive are no longer added to Mod Command X.
-- An old runtime copy in the archive now shows in Import as "Old ZCSDK Runtime
-  copy — safe to clean up", with its own Clean up button (never ticked, never
-  adopted).
+- Hangar Bay → Import ticked an old copy of ZCSDKBridge from the mod archive
+  for you, and adopting it replaced — or deleted — your installed runtime, so
+  every mod built with the Zero Company Mod SDK stopped working.
+- The ZCSDK Runtime (ZCSDKBridge + ZCSDKLoader) is now protected. Only
+  Settings → ZCSDK Runtime installs, updates or removes it. While SDK mods are
+  installed, its Hangar rows say "◆ Required by N SDK mods" and can't be
+  switched off, uninstalled, rolled back or renamed; Disable all, squad
+  profiles and Apply start order leave it on.
+- Import and cleanup never adopt, replace or remove it. An old runtime copy
+  in the archive shows in Import as "Old ZCSDK Runtime copy — safe to clean
+  up".
 - New: Settings → ZCSDK Runtime → **Remove** takes both parts out together,
   after listing the SDK mods that will stop working.
-- Self-heal: at startup and after any change to your mods, if SDK mods are
-  installed and the runtime is missing, incomplete or switched off, Mod Command
-  X puts it back (from its own copy, or the bundled one; it asks first when
-  that needs a download) and tells you. If the game is running it waits until
-  you close it. If you removed the runtime yourself, it stays removed.
+- Self-heal: if SDK mods are installed and the runtime is missing, incomplete
+  or switched off, Mod Command X puts it back and tells you (it asks first if
+  that needs a download, and waits until the game is closed). If you removed
+  the runtime yourself, it stays removed.
 
-**Safer for every mod**
-- Import: orphaned archive entries are no longer pre-ticked, and each one says
-  what adopting it does — "installs as a new mod", "older than your installed
-  … — added to its ⧗ Versions only", or "REPLACES your installed X v2.0.0 with
-  v3.0.0". An entry that replaces an installed mod must be ticked by hand, and
-  Adopt asks once more.
-- Switching a mod off removes only the files Mod Command X put there. A file
-  in the mod's folder that it did not deploy (a settings file the mod wrote,
-  something you added) is kept, and the log says so.
-- While Star Wars Zero Company is running, Mod Command X refuses to switch,
-  remove, update, roll back, rename or reorder mods, apply a squad profile, or
-  adopt from Import, with a clear "close the game first" message — the game
-  has those files open, which is what broke things half way before.
-- If replacing a mod fails part way (an update, an adoption, a rollback, a
-  runtime reinstall), the version you had is put back exactly as it was,
-  instead of being left switched off or half replaced.
+**Safer mod changes**
+- Import no longer pre-ticks anything. Each archive entry says what adopting
+  it does ("installs as a new mod", "added to ⧗ Versions only", or "REPLACES
+  your installed …"), and a replacement asks once more.
+- Switching off or removing a mod removes only the files Mod Command X put
+  there; files the mod wrote or you added are kept.
+- If an update, adoption, rollback or reinstall fails part way, the version
+  you had is put back exactly as it was.
 - A mod that was off stays off through an update, adoption, rollback or
-  restore: the new copy goes in switched off, instead of being put into the
-  game and taken out again.
-- Adopting a UE4SS mod folder that was switched off no longer deletes it from
-  the game.
+  restore.
+- No mod changes while Star Wars Zero Company is running: switching,
+  removing, updating, rolling back, renaming, reordering, squad profiles and
+  Import wait for you to close the game, with a clear message.
 
 ## Mod Command X 1.0.1 — 2026-09-29
 
