@@ -85,7 +85,9 @@ automatically for IoStore package inspection; a different copy can be selected i
   extracted folders. Drag & drop anywhere in the window. Enable/disable, rename, uninstall.
 - **Mod types** (auto-classified):
   - `pak` / `iostore` → deployed to `SWZeroCompany/Content/Paks/~mods` with
-    `pakchunk99-P###_Name` priority naming (matched basenames across pak/utoc/ucas).
+    `pakchunk99-P###_Name` priority naming (matched basenames across pak/utoc/ucas),
+    or under their original file names with Settings → Behavior → **Keep original
+    pak file names** (see [How mods are deployed](#how-mods-are-deployed)).
   - Content mods built with the **Zero Company Mod SDK** ship two sidecars beside
     the pak trio (`<Mod>.AssetRegistry.bin` + `<Mod>.zcsdk.lua`); they deploy to
     `~mods` too, keeping their exact names, and the row gets a ◆ SDK chip. They
@@ -531,6 +533,47 @@ automatically for IoStore package inspection; a different copy can be selected i
   (`src/assets/mod-placeholder-x.svg`, swapped by `app.js`). The Nexus website in
   the download panel and a linked SDK's Forge workbench keep their own looks.
 
+## How mods are deployed
+
+**Pak and IoStore mods** go to `SWZeroCompany\Content\Paks\~mods`. By default
+every file is renamed to `pakchunk99-P<NNN>_<Mod>_<file>.pak` (`.utoc` /
+`.ucas` alike):
+
+- **Load order.** The game mounts `~mods` in file-name order, and a later file
+  wins where two mods change the same asset. The `P<NNN>` number is the mod's
+  place in the load order list (Diagnostics → Pak & IoStore load order), so
+  dragging a mod down really makes it win.
+- **No collisions.** Many mods ship files with generic names (`Mod_P.pak`,
+  `pakchunk99.pak`). Copied as-is, a second mod with the same name would
+  overwrite the first one.
+- **IoStore trio.** A `.pak` + `.utoc` + `.ucas` set only works when all three
+  share one base name; they are renamed together and keep a shared base.
+- ZCSDK sidecars (`*.zcsdk.lua`, `*.AssetRegistry.bin`) always keep their own
+  names — the ZCSDK Runtime finds them by name.
+
+Settings → Behavior → **Keep original pak file names** (off by default) deploys
+every pak/IoStore file under the name it shipped with instead — for a mod or tool
+that expects its exact file name. Then the load order list no longer decides
+which mod wins (the game goes alphabetically by file name; the list is kept and
+marked "not applied"), and two mods that ship a file with the same name can't
+both be enabled: Mod Command X refuses the second one and names the mod that
+already has that file. Switching the setting renames the files of every enabled
+pak mod (close the game first); if one can't be renamed, all of them stay as they
+were.
+
+**UE4SS mods** go to `SWZeroCompany\Binaries\Win64\ue4ss\Mods\<folder>`, where
+`<folder>` is the mod's **own folder name** from its archive (the folder that
+holds `Scripts\` or `dlls\`). Renaming a mod in Mod Command X only changes the
+name you see: addons look for their parent mod by its folder, Lua mods build
+paths from it, and other tools write it into `mods.txt`, so the folder never
+moves. Two UE4SS mods with the same folder name can't both be installed.
+Before 1.0.3 the folder followed the display name; a mod that was deployed that
+way stays where it is and its row offers **Use original name** (moves the folder
+and its `mods.txt` line back; close the game first) or **Keep as is**.
+
+**Game Feature plugins** go to `SWZeroCompany\Mods\<Plugin>` under the name of
+their `.uplugin`; renaming one is cosmetic too.
+
 ## Mod metadata (`modinfo.json`)
 
 A UE4SS Lua/DLL mod can ship an optional `modinfo.json` in its mod folder (next
@@ -545,8 +588,9 @@ to `Scripts/` or `dlls/`) to control how it appears in the manager:
 - `title` — the display name shown in the Hangar Bay (1–120 chars; spaces and
   punctuation are fine). Without it, the mod falls back to its folder name run
   through the filesystem sanitizer (so `My Cool Mod` would show as `My_Cool_Mod`).
-- The **deployed folder** on disk is always the sanitized name regardless of
-  `title`, so the on-disk layout stays filesystem-safe. `title` is display-only.
+- The **deployed folder** on disk is the mod's own folder name from its archive,
+  regardless of `title` (see [How mods are deployed](#how-mods-are-deployed)).
+  `title` is display-only.
 - The convention is opt-in: mods without a `modinfo.json` behave exactly as before.
 - Read at install/import time (`classifyFolder` in `lib/mods.js`); a malformed
   manifest is ignored and the folder name is used.

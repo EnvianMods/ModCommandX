@@ -1,5 +1,39 @@
 # Mod Command X — Changelog
 
+## Mod Command X 1.0.3 (unreleased)
+
+**Fixed: renaming a UE4SS mod moved its folder**
+- A UE4SS mod now always lives in its own folder name from its archive
+  (`ue4ss\Mods\CoolMod`), whatever you call it in Mod Command X. Before, the
+  folder was named after the display name, so a rename — or the automatic
+  rename to the Nexus page name after a one-click install — moved it to
+  `ue4ss\Mods\My_Cool_Mod`. That broke mods that depend on their folder:
+  addons that look for their parent mod, Lua mods that build paths from their
+  own folder, and `mods.txt` lines written by other tools.
+- Renaming is now only a new label: nothing in the game moves, `mods.txt`
+  stays as it is, and the mod stays on. Updates and rollbacks keep the folder
+  too.
+- Mods already deployed under a renamed folder are left exactly where they are.
+  Their row shows "Deployed as 'X' — the mod's own folder name is 'Y'" with
+  **Use original name** (moves the folder, anything the mod saved in it, and
+  its `mods.txt` line; close the game first) and **Keep as is**.
+- Two UE4SS mods with the same folder name can no longer be installed side by
+  side: the second one is refused with a message naming the first.
+
+**New: Settings → Behavior → Keep original pak file names** (off by default)
+- Pak and IoStore files are still renamed to `pakchunk99-P001_<Mod>_…` in
+  `~mods` by default, so the load order decides which mod wins and two mods'
+  generic file names never overwrite each other.
+- Turn the setting on to deploy every file under the name it shipped with (an
+  IoStore .pak/.utoc/.ucas set keeps its shared name). The load order list then
+  no longer decides which mod wins — the game goes alphabetically by file name —
+  so the list is marked "not applied" and can't be dragged. Two mods that ship a
+  file with the same name can't both be enabled: the second one is refused with
+  the other mod's name.
+- Switching renames the files of every enabled pak mod at once (close the game
+  first). If anything gets in the way, nothing is changed.
+- Diagnostics → Deployed files checks the names for the mode you picked.
+
 ## Mod Command X 1.0.2 — 2026-10-01
 
 **Fixed: UE4SS mods did not run after installing the ZCSDK Runtime**
