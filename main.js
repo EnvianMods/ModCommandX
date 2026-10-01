@@ -1526,11 +1526,16 @@ function startupRecovery() {
     return;
   }
   try {
-    const repaired = engine.repairDeployments();
+    // Files changed outside Mod Command X (e.g. a newer build) are never
+    // replaced by the stored copy: those mods come back in `skipped`.
+    const { repaired, skipped } = engine.repairDeployments();
     if (repaired.length) {
       log('warn', `startup recovery redeployed: ${repaired.join(', ')}`);
       sendEvent({ type: 'state', state: fullState() });
       sendEvent({ type: 'toast', kind: 'warn', message: `Recovered missing deployed files for: ${repaired.join(', ')}.` });
+    }
+    if (skipped.length) {
+      sendEvent({ type: 'toast', kind: 'warn', message: `Not restored: ${skipped.join(', ')} — the files in the game were changed outside Mod Command X (e.g. a newer build), so they were left as they are. To bring the mod up to date in Mod Command X, install that build with Hangar Bay → ⊕ Install archive.` });
     }
   } catch (_) {}
   healZcsdkRuntime('startup').catch(() => {});
@@ -1553,6 +1558,15 @@ function startupRecovery() {
 let zcsdkHealBusy = false;
 let zcsdkHealWait = null;
 let zcsdkHealAsked = null;
+let zcsdkHealLeftNoted = null;
+// Self-heal found runtime files changed outside Mod Command X and left them
+// alone: say so once per set of parts (it runs after every mod operation).
+function zcsdkHealLeftAlone(names) {
+  const key = [...names].sort().join('|');
+  if (zcsdkHealLeftNoted === key) return;
+  zcsdkHealLeftNoted = key;
+  sendEvent({ type: 'toast', kind: 'warn', message: `ZCSDK Runtime not restored: the files of ${names.join(' and ')} in the game were changed outside Mod Command X (e.g. a newer runtime build), so they were left as they are. To have Mod Command X manage the runtime again, use Settings → ZCSDK Runtime → Update / Reinstall.` });
+}
 async function healZcsdkRuntime(reason) {
   if (zcsdkHealBusy || !store.settings.gamePath || store.settings.zcsdkRemovedByUser) return null;
   zcsdkHealBusy = true;
@@ -1586,7 +1600,8 @@ async function healZcsdkRuntime(reason) {
     const pkg = zcsdkRt.availableRuntime();
     const plan = engine.zcsdkHealPlan(pkg);
     if (plan.action === 'enable') {
-      const fixed = engine.healZcsdkParts(plan.ids);
+      const { fixed, skipped } = engine.healZcsdkParts(plan.ids);
+      if (skipped.length) zcsdkHealLeftAlone(skipped);
       if (!fixed.length) return null;
       log('warn', `ZCSDK Runtime self-heal (${reason}): switched back on / redeployed ${fixed.join(', ')} — ${plan.reason}`);
       sendEvent({ type: 'state', state: fullState() });
@@ -1597,6 +1612,16 @@ async function healZcsdkRuntime(reason) {
     if (!pkg) {
       log('error', `ZCSDK Runtime self-heal (${reason}): the runtime is missing and no package is available`);
       sendEvent({ type: 'toast', kind: 'error', message: 'The ZCSDK Runtime your SDK mods need is missing, and no copy is available offline — install it from Settings → ZCSDK Runtime when you are online.' });
+      return null;
+    }
+    // A runtime whose files in the game were changed outside Mod Command X (a
+    // newer build deployed by the Mod SDK) is not silently reinstalled over.
+    const changedOutside = engine.zcsdkPartsChangedOutside();
+    if (changedOutside.length) {
+      for (const c of changedOutside) {
+        log('warn', `ZCSDK Runtime self-heal (${reason}) skipped reinstalling: ${c.name}'s files in the game were changed outside Mod Command X (${c.files.slice(0, 3).join(', ')}${c.files.length > 3 ? ', …' : ''})`);
+      }
+      zcsdkHealLeftAlone(changedOutside.map((c) => c.name));
       return null;
     }
     if (pkg.source === 'github') {
@@ -3710,6 +3735,10 @@ function diagnostics() {
     add('warning', 'Deployed files', `${missing.length} deployed file(s) are missing: ${missing.map((m) => m.file).join(', ')}`);
   } else {
     add('good', 'Deployed files', 'All enabled mods are fully deployed.');
+  }
+  const drifted = store.settings.gamePath ? engine.auditChangedDeployments() : [];
+  if (drifted.length) {
+    add('warning', 'Deployed files', `Deployed files changed outside Mod Command X (e.g. a newer build) for: ${drifted.map((d) => d.modName).join(', ')}. Startup recovery leaves them as they are; to bring a mod up to date in Mod Command X, install that build with Hangar Bay → ⊕ Install archive.`);
   }
   const duplicates = store.settings.gamePath ? engine.scanDuplicateMods() : [];
   if (duplicates.length) {
