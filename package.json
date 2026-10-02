@@ -1,7 +1,7 @@
 {
   "name": "mod-command-x",
   "productName": "Mod Command X",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "modCommandCompat": "1.9.14",
   "description": "Mod Command X — a private side-by-side build of Zero Company Mod Command",
   "main": "main.js",

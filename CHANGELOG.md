@@ -1,11 +1,11 @@
 # Mod Command X — Changelog
 
-## Mod Command X 1.0.3 (unreleased)
+## Mod Command X 1.0.3 — 2026-10-01
 
 **Fixed: changes could go through while the game was running**
 - Mod Command X checks that Star Wars Zero Company is closed before it switches
-  mods on or off, removes, updates or renames them, installs or repairs the
-  ZCSDK Runtime, switches UE4SS, or renames pak files. On some PCs that check
+  mods on or off, removes or updates them, installs or repairs the ZCSDK
+  Runtime, switches UE4SS, or renames pak files. On some PCs that check
   took so long that it gave up — and then counted the game as closed, so
   changes were made under a running game.
 - The check now looks at whether the game's own files are in use, which takes
