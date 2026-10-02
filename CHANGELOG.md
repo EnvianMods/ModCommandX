@@ -48,6 +48,34 @@
   first). If anything gets in the way, nothing is changed.
 - Diagnostics → Deployed files checks the names for the mode you picked.
 
+**Fixed: startup recovery could replace a newer build with an older copy**
+- When a mod's files went missing from the game, Mod Command X put the
+  stored copy back at the next start, over everything that was still there.
+  A mod built with the Zero Company Mod SDK, deployed straight into
+  `SWZeroCompany\Mods\<Name>\` with a different set of files, was replaced
+  by the older copy in the mod archive — a newer build lost on startup. The
+  shared mod archive made this likelier: a mod taken over from Mod Command
+  uses Mod Command's stored copy, which can be older than what is in the
+  game.
+- Startup recovery now only puts back missing files when everything still in
+  the game is exactly what Mod Command X deployed (sizes, then checksums) and
+  nothing else was added to a plugin mod's folder. Otherwise the mod's files
+  are left as they are, a toast says "Not restored", and the log says why.
+  To bring such a mod up to date in Mod Command X, install that build with
+  Hangar Bay → ⊕ Install archive.
+- Diagnostics shows a "Deployed files" warning for enabled mods whose files
+  were changed outside Mod Command X.
+- The ZCSDK Runtime self-heal follows the same rule: a runtime part whose
+  files in the game were changed outside Mod Command X (e.g. a newer runtime
+  build) is not switched back on, redeployed or silently reinstalled over —
+  a toast points to Settings → ZCSDK Runtime → Update / Reinstall. Editing a
+  UE4SS mod's `enabled.txt` never counts as a change.
+- A restore from a mod archive that runs without a click can now leave a mod
+  switched off instead of deploying it over different files already in the
+  game (Import, which you start yourself, works as before).
+- Very large files (multi-GB `.ucas`) are checked in chunks instead of being
+  read into memory whole.
+
 ## Mod Command X 1.0.2 — 2026-10-01
 
 **Fixed: UE4SS mods did not run after installing the ZCSDK Runtime**
