@@ -425,9 +425,10 @@ automatically for IoStore package inspection; a different copy can be selected i
     file ids only grow). With **Keep UE4SS up to date automatically** (Settings,
     `settings.ue4ssAutoUpdate`, default on) and a premium account, the new file
     is installed while the game is closed; while `SWZeroCompany.exe` /
-    `SWZeroCompany-Win64-Shipping.exe` runs from this install (`steam.isGameRunning`,
-    tasklist + image paths) it is held back, you are told once, and it is
-    retried every five minutes. With it off, on a free account, or without an
+    `SWZeroCompany-Win64-Shipping.exe` runs from this install (`steam.gameRunningState`:
+    the game's exe files are in use, else a process query with image paths;
+    a check that cannot finish counts as running) it is held back, you are
+    told once, and it is retried every five minutes. With it off, on a free account, or without an
     API key, you get one toast per new file and **Update to …** on the card (and
     in Diagnostics) — on a free account that one click queues the file's
     download page through the one-click flow; nothing opens unprompted. A manual

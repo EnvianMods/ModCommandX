@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('zc', {
   launchUninstaller: () => invoke('launch-uninstaller'),
   setAllEnabled: (enabled, force) => invoke('set-all-enabled', { enabled, force }),
   scanManagerSources: () => invoke('scan-manager-sources'),
+  checkGameRunning: () => invoke('check-game-running'),
   importManagerFolder: (path) => invoke('import-manager-folder', { path }),
   chooseStorageDir: () => invoke('choose-storage-dir'),
   resetStorageDir: () => invoke('reset-storage-dir'),

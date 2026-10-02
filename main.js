@@ -66,7 +66,7 @@ if (process.env.MCX_USER_DATA_DIR) app.setPath('userData', process.env.MCX_USER_
 
 const { Store } = require('./lib/store');
 const steam = require('./lib/steam');
-const { ModEngine, compareVersions, isZcsdkRuntimeRecord, MODS_REL, LOGIC_MODS_REL, WIN64_REL, UE4SS_MODS_REL, GAME_MODS_REL } = require('./lib/mods');
+const { ModEngine, GAME_UNKNOWN_MESSAGE, compareVersions, isZcsdkRuntimeRecord, MODS_REL, LOGIC_MODS_REL, WIN64_REL, UE4SS_MODS_REL, GAME_MODS_REL } = require('./lib/mods');
 const { findSevenZip, bundledSevenZip } = require('./lib/archive');
 const nexus = require('./lib/nexus');
 const nexusHttp = require('./lib/nexus-http');
@@ -192,17 +192,23 @@ function dismissShared(id) {
 
 // Is Star Wars Zero Company running from the configured game folder? Asked
 // before every change that takes mods out of the game or puts them back
-// (lib/mods.js _assertGameClosed); cached for a few seconds, because one
-// operation asks several times and the check spawns tasklist.
-let gameRunningCache = { at: 0, path: null, value: false };
-function gameRunningNow() {
+// (lib/mods.js _assertGameClosed). Answers 'running' | 'not-running' |
+// 'unknown' (lib/steam.js gameRunningState, cached there for a few seconds);
+// 'unknown' — the check could not finish — is treated as running by every
+// change (refused with "Couldn't confirm … is closed") and makes startup
+// repairs wait, exactly like a running game. No game folder = nothing to guard.
+steam._setGameRunningLog((level, msg) => log(level, msg));
+function gameRunningNow(opts) {
   const gp = store.settings.gamePath;
-  if (!gp) return false;
-  const now = Date.now();
-  if (gameRunningCache.path === gp && now - gameRunningCache.at < 3000) return gameRunningCache.value;
-  const value = !!steam.isGameRunning(gp);
-  gameRunningCache = { at: now, path: gp, value };
-  return value;
+  if (!gp) return 'not-running';
+  return steam.gameRunningState(gp, opts).state;
+}
+function gameIsRunningOrUnknown(opts) { return gameRunningNow(opts) !== 'not-running'; }
+// UE4SS installs/switches outside the mod engine: the same rule.
+function assertGameClosedForUe4ss() {
+  const st = gameRunningNow();
+  if (st === 'unknown') throw new Error(`${GAME_UNKNOWN_MESSAGE} (The running game would have UE4SS loaded.) Nothing was changed.`);
+  if (st !== 'not-running') throw new Error(GAME_RUNNING_UE4SS);
 }
 engine.gameRunning = gameRunningNow;
 
@@ -1066,7 +1072,7 @@ async function handleNxm(rawUrl) {
       // first, and record the install so updates can be tracked.
       const isUe4ssPage = link.modId === ue4ssDl.NEXUS_MOD_ID;
       if (isUe4ssPage) {
-        if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+        assertGameClosedForUe4ss();
         keepCurrentUe4ss();
       }
       if (plan.mode === 'replace-parent' || plan.mode === 'replace-child') {
@@ -1516,11 +1522,11 @@ app.whenReady().then(() => {
 let startupRecoveryTimer = null;
 function startupRecovery() {
   if (!store.settings.gamePath) return;
-  if (gameRunningNow()) {
+  if (gameIsRunningOrUnknown()) {
     if (!startupRecoveryTimer) {
-      log('info', 'startup recovery waits for the game to close');
+      log('info', 'startup recovery waits for the game to close (or until it can be confirmed closed)');
       startupRecoveryTimer = setInterval(() => {
-        if (gameRunningNow()) return;
+        if (gameIsRunningOrUnknown({ force: true })) return;
         clearInterval(startupRecoveryTimer);
         startupRecoveryTimer = null;
         startupRecovery();
@@ -1573,12 +1579,12 @@ async function healZcsdkRuntime(reason) {
     }
     if (first.action === 'none') return null;
     if (!store.settings.zcsdkRuntimeWanted && !store.mods.some((m) => isZcsdkRuntimeRecord(m))) return null;
-    if (gameRunningNow()) {
+    if (gameIsRunningOrUnknown()) {
       if (!zcsdkHealWait) {
         log('warn', `ZCSDK Runtime needs restoring (${first.reason}) — waiting for the game to close`);
         sendEvent({ type: 'toast', kind: 'warn', message: 'The ZCSDK Runtime your SDK mods need is missing or switched off. Mod Command X restores it as soon as the game is closed.' });
         zcsdkHealWait = setInterval(() => {
-          if (gameRunningNow()) return;
+          if (gameIsRunningOrUnknown({ force: true })) return;
           clearInterval(zcsdkHealWait);
           zcsdkHealWait = null;
           healZcsdkRuntime('after the game closed').catch(() => {});
@@ -2588,16 +2594,26 @@ const handlers = {
 
   'scan-unmanaged': async () => engine.scanUnmanaged(),
 
+  // "Check again" after a change was refused because the game could not be
+  // confirmed closed: a fresh check, skipping the few-second cache.
+  'check-game-running': async () => {
+    if (!store.settings.gamePath) return { state: 'not-running' };
+    const r = steam.gameRunningState(store.settings.gamePath, { force: true });
+    return { state: r.state, method: r.method, ms: r.ms };
+  },
+
   'scan-manager-sources': async () => ({
     orphans: engine.scanOrphanLibraries(),
     sources: detectManagerSources(),
-    gameRunning: gameRunningNow(),
+    gameRunning: gameIsRunningOrUnknown(),
   }),
 
   // allowReplace: orphan ids the user ticked knowing they replace an
   // installed mod (the dialog says so and asks again).
   'adopt-mods': async (_e, { ids, allowReplace }) => {
-    if (gameRunningNow()) {
+    const gameState = gameRunningNow();
+    if (gameState === 'unknown') throw new Error(`${GAME_UNKNOWN_MESSAGE} (Adopting mods can replace installed ones, whose files the running game would have loaded.) Nothing was changed.`);
+    if (gameState !== 'not-running') {
       throw new Error('Close Star Wars Zero Company first — adopting mods can replace installed ones, whose files the running game has loaded. Nothing was changed.');
     }
     const results = [];
@@ -3167,7 +3183,7 @@ const handlers = {
   // notice again and a kept Nexus file is tracked for updates again.
   'ue4ss-restore': async (_e, { entryId }) => {
     if (!store.settings.gamePath) throw new Error('Locate the game folder in Settings first.');
-    if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+    assertGameClosedForUe4ss();
     const cur = currentUe4ssMeta();
     const m = engine.ue4ssRestore(entryId, ue4ssLabel(cur), cur);
     const at = new Date().toISOString();
@@ -3366,7 +3382,7 @@ async function installUe4ssFromNexus(fileId, { auto = false } = {}) {
   if (!nexusUser) { try { mergeNexusUser(await nexus.validateKey(token)); } catch (err) { throw new Error(err.message); } }
   // The running game has UE4SS loaded: say so now, before a download that
   // could not be installed anyway (handleNxm checks again for free accounts).
-  if (steam.isGameRunning(store.settings.gamePath)) throw new Error(GAME_RUNNING_UE4SS);
+  assertGameClosedForUe4ss();
   // Free account: X's one-click — the embedded panel (or the user's own
   // browser, per "Where to finish free downloads") at this exact file's
   // download page, queued like every other one-click download; its nxm://
@@ -3483,7 +3499,7 @@ async function maybeCheckUe4ss({ force = false } = {}) {
       sendEvent({ type: 'toast', kind, message });
     };
     if (auto && premium) {
-      if (steam.isGameRunning(store.settings.gamePath)) {
+      if (gameIsRunningOrUnknown()) {
         const first = !ue4ssPending || ue4ssPending.fileId !== nx.fileId;
         ue4ssPending = { fileId: nx.fileId, version: nx.version || null, reason: 'game-running', since: new Date().toISOString() };
         if (first) {

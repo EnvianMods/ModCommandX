@@ -2,6 +2,20 @@
 
 ## Mod Command X 1.0.3 (unreleased)
 
+**Fixed: changes could go through while the game was running**
+- Mod Command X checks that Star Wars Zero Company is closed before it switches
+  mods on or off, removes, updates or renames them, installs or repairs the
+  ZCSDK Runtime, switches UE4SS, or renames pak files. On some PCs that check
+  took so long that it gave up — and then counted the game as closed, so
+  changes were made under a running game.
+- The check now looks at whether the game's own files are in use, which takes
+  a few milliseconds, and only asks Windows for the running programs when that
+  can't tell.
+- If it still can't be sure, nothing is changed: you see "Couldn't confirm Star
+  Wars Zero Company is closed — close it and try again" with a **Check again**
+  button, which repeats what you were doing once the game is confirmed closed.
+  Automatic repairs at startup wait instead.
+
 **Fixed: renaming a UE4SS mod moved its folder**
 - A UE4SS mod now always lives in its own folder name from its archive
   (`ue4ss\Mods\CoolMod`), whatever you call it in Mod Command X. Before, the
