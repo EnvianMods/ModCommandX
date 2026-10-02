@@ -75,6 +75,18 @@
   game (Import, which you start yourself, works as before).
 - Very large files (multi-GB `.ucas`) are checked in chunks instead of being
   read into memory whole.
+- The check looks where each mod really is: a UE4SS mod in its own folder,
+  pak files under the names your "Keep original pak file names" setting gives
+  them.
+
+**ZCSDK Runtime v0.12.1 bundled**
+- The copy of the ZCSDK Runtime used for offline installs is now v0.12.1
+  (ZCSDKBridge 0.5.3, ZCSDKLoader 1.8.30). It ships three UE4SS signature
+  files (ConsoleManager, FName_ToString, GUObjectHashTables) instead of six.
+- Updating from v0.12 removes the three signature files the runtime no longer
+  ships — only the runtime's own, unchanged copies. A signature file of yours
+  that the runtime had replaced is put back, and one you edited since is left
+  as it is. Online, the newest runtime release is installed as before.
 
 ## Mod Command X 1.0.2 — 2026-10-01
 
