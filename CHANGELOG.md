@@ -1,5 +1,100 @@
 # Mod Command X — Changelog
 
+## Mod Command X 1.0.6 — 2026-10-25
+
+**Install asks which main file when a mod has more than one**
+- Some mods offer two current main files side by side, for example one build
+  with Aftermath support and one without. The Holonet card's ⭳ Install button
+  always took the newest one, with no choice. Now, when a mod has two or more
+  main files, Install opens the version picker with just those files and
+  installs the one you pick. Premium downloads and installs it here; on a
+  free account it opens at that file's own download page in the Nexus panel
+  and installs here.
+- A fresh install from the version picker is named after the mod, like the
+  Install button does, instead of after its pak.
+- Mods with a single main file install exactly as before.
+
+**Readable names for recovered library entries**
+- A mod found in the library without its record (an orphaned entry) used to be
+  listed, and adopted, under its storage id, a string of 16 letters and
+  digits. It now gets a readable name: the ZC Unlocked add-on's name, the pak
+  name, the mod's folder or file name, or "Recovered mod" when nothing better
+  is there. The mod's own name, when it has one, still wins. The same applies
+  to imports from another manager's library and to **Reinstall as ZC
+  Unlocked add-on** from the stored copy.
+- Mods already in your list under a storage id get a readable name back at
+  the next start. Only the name shown changes; no game file is moved. Their
+  paks keep their current file names in `~mods` until they are next taken out.
+- The ZC Unlocked add-on banner, the row's chip, the reinstall prompt and
+  Diagnostics now say which add-on they mean, for example "HeavyArmor"
+  (050_ZCA_HeavyArmor_P), and small sizes are shown in MB.
+
+**Nexus Mods identification on every request**
+- Every request to Nexus Mods now names the app: `Application-Name: Mod
+  Command X` and `Application-Version` (this build's version). Before, only
+  the app's own API calls carried them. Now they also go on file downloads
+  from the Nexus download servers, on the Hangar's Nexus pictures, and on
+  everything the built-in Nexus panel loads, including the Nexus sign-in
+  pages. The panel still looks like a plain Chrome browser to Nexus.
+
+**ZC Unlocked add-ons: no copy is overwritten or lost**
+- An add-on never overwrites a copy of itself that Mod Command X doesn't
+  manage in its own folder. This applies when you switch it on, when it was
+  waiting for ZC Unlocked, when it was installed switched off (it stays in
+  the library with a note), and to **Reinstall as ZC Unlocked add-on** from
+  the stored copy. In each case you get a message and nothing is changed.
+- When an add-on update fails and the previous version can't be put back
+  completely, that version stays in ⧗ versions. Missing files are put back at
+  the next start, and the message says so. Rolling back and updating from
+  the source work the same way.
+- Updating a copy you put in `ue4ss\Mods\<Pack>` yourself now follows ZC
+  Unlocked's own settings. If your ZC Unlocked doesn't load packs from there
+  (it is older than 1.4.73, or `addons_mods=0` is set in its `settings.ini`),
+  the update goes to `ZCUnlocked\addons\<Pack>` instead, and the install
+  says so. If ZC Unlocked's add-ons are off (`addons=0`) or the pack's own
+  switch is off in the ZC Unlocked Menu, the message tells you.
+- Import and add-on takeovers leave alone any files another installed mod
+  put in an add-on's folder.
+- An add-on that can't be switched back on is taken out without forcing, so
+  a file you changed in the game stays.
+
+**Reinstall as ZC Unlocked add-on from Nexus**
+- **⇩ From Nexus…** still downloads the file the entries came from in one
+  click. If that file is no longer on the mod page, or turns out not to be
+  the add-on edition, the mod's Files page opens in the Nexus panel instead
+  (Premium too). Press "Mod Manager Download" on the add-on edition and the
+  reinstall finishes with that file. Nothing is downloaded before you pick.
+- That wait ends when the panel closes, so a later ordinary download of the
+  same mod installs normally.
+
+**Keep original pak file names**
+- A file in `~mods` with exactly the same contents as a mod's pak, put there
+  outside Mod Command X, is used as it is but stays yours. Switching the mod
+  off or removing it never deletes it, and the row says so.
+- Profiles switch mods off before they switch others on. Two mods that ship
+  the same pak file name no longer stop a profile. A pak whose original name
+  is already taken stays off with a warning, and the rest of the profile
+  still applies.
+- If switching the setting fails and a mod can't be put back, every one of
+  its files is put back at the next start.
+
+**Safer links**
+- **Open in browser** only opens real Nexus Mods pages (including the
+  sign-in and account pages), GitHub and Discord. The address itself is
+  checked, so look-alike addresses are refused.
+- The Nexus panel only follows pop-up links to real Nexus Mods pages.
+- Any other embedded web view is locked down the same way as the Nexus
+  panel, or refused.
+- The hosted Mod SDK can only open web pages in your browser.
+
+**Smaller fixes**
+- Settings switches (Theme, Keep original pak file names and the others)
+  no longer flick back for a moment while their change is saved.
+- The Nexus panel's count of blocked page parts starts over when Nexus
+  changes pages in place too.
+- Spelling: canceled, recognized.
+- Electron 44.6.0.
+
 ## Mod Command X 1.0.5 — 2026-10-04
 
 **Fixed: ZC Unlocked add-on packs installed by 1.0.3 as plain paks**
